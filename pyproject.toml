@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "renogy-ble"
 version = "0.1.0"
@@ -5,3 +9,20 @@ description = "A library for parsing Renogy BLE data"
 readme = "README.md"
 requires-python = '>=3.6'
 dependencies = []
+authors = [
+    {name = "Mitchell Carlson", email = "mitchell.carlson.pro@gmail.com"}
+]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/IAmTheMitchell/renogy-ble"
+"Bug Tracker" = "https://github.com/IAmTheMitchell/renogy-ble/issues"
+
+[tool.setuptools]
+license-files = []
+# Fix from https://github.com/astral-sh/uv/issues/9513#issuecomment-2519527822
