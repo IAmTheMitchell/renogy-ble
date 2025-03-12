@@ -104,8 +104,8 @@ This checklist outlines every task required to build, test, and package the Reno
 ---
 
 ## 9. Documentation and Final Checks
-- [ ] Review the entire codebase for consistency and integration
-- [ ] Update comments and documentation as needed
-- [ ] Ensure there is no orphaned or unused code in the project
-- [ ] Prepare a README.md that describes the project, usage, and contribution guidelines
-- [ ] Commit all changes and prepare the repository for version control
+- [x] Review the entire codebase for consistency and integration
+- [x] Update comments and documentation as needed
+- [x] Ensure there is no orphaned or unused code in the project
+- [x] Prepare a README.md that describes the project, usage, and contribution guidelines
+- [x] Commit all changes and prepare the repository for version control
