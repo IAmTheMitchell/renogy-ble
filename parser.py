@@ -5,8 +5,11 @@ This module provides functionality to parse raw byte data from Renogy BLE device
 according to the register mappings defined in register_map.py
 """
 
-import warnings
+import logging
 from register_map import REGISTER_MAP
+
+# Set up logger for this module
+logger = logging.getLogger(__name__)
 
 
 def parse_value(data, offset, length, byte_order):
@@ -61,11 +64,15 @@ class RenogyBaseParser:
         
         # Check if the model exists in our register map
         if model not in self.register_map:
-            warnings.warn(f"Unsupported model: {model}")
+            logger.warning("Unsupported model: %s", model)
             return result
             
         # Get the register map for this model
         model_map = self.register_map[model]
+        
+        # Log data characteristics for debugging
+        logger.debug("Parsing %d bytes for model %s with %d fields", 
+                     len(data), model, len(model_map))
         
         # Iterate through each field in the model map
         for field_name, field_info in model_map.items():
@@ -88,7 +95,10 @@ class RenogyBaseParser:
                 
             except ValueError:
                 # If there's not enough data, log a warning and continue
-                warnings.warn("Warning: Unexpected data length, partial parsing attempted.")
+                logger.warning("Unexpected data length, partial parsing attempted. "
+                              "Expected at least %d bytes for field '%s' at offset %d, "
+                              "but data length is only %d bytes.",
+                              offset + length, field_name, offset, len(data))
                 
                 # We can't parse any more fields if we've run out of data
                 break

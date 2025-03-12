@@ -11,6 +11,11 @@ from parser import RoverParser
 
 # Set up logging
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 
 class RenogyParser:
@@ -36,7 +41,7 @@ class RenogyParser:
         """
         # Check if the model is supported in the register map
         if model not in REGISTER_MAP:
-            logger.warning(f"Unsupported model: {model}")
+            logger.warning("Unsupported model: %s", model)
             return {}
             
         # Route to the appropriate model-specific parser
@@ -46,5 +51,5 @@ class RenogyParser:
             
         # This should not be reached if the model checking is comprehensive,
         # but included as a safeguard
-        logger.warning(f"Model {model} is in REGISTER_MAP but no parser is implemented")
+        logger.warning("Model %s is in REGISTER_MAP but no parser is implemented", model)
         return {}
