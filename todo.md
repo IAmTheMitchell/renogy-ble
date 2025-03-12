@@ -77,15 +77,15 @@ This checklist outlines every task required to build, test, and package the Reno
 ---
 
 ## 7. Testing
-- [ ] In `tests/test_parser.py`, write unit tests to cover:
-  - [ ] Valid full data parsing for the Rover model:
-    - [ ] Provide complete raw bytes and verify that the output matches expected values
-  - [ ] Partial data parsing:
-    - [ ] Simulate truncated data and verify a warning is logged and partial results are returned
-  - [ ] Unsupported model handling:
-    - [ ] Pass an invalid model and verify that an empty dictionary is returned with a warning
-  - [ ] Correct handling of byte orders (big-endian and little-endian)
-- [ ] Run tests and ensure all tests pass
+- [x] In `tests/test_parser.py`, write unit tests to cover:
+  - [x] Valid full data parsing for the Rover model:
+    - [x] Provide complete raw bytes and verify that the output matches expected values
+  - [x] Partial data parsing:
+    - [x] Simulate truncated data and verify a warning is logged and partial results are returned
+  - [x] Unsupported model handling:
+    - [x] Pass an invalid model and verify that an empty dictionary is returned with a warning
+  - [x] Correct handling of byte orders (big-endian and little-endian)
+- [x] Run tests and ensure all tests pass
 
 ---
 
