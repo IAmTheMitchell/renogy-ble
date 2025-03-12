@@ -59,12 +59,12 @@ This checklist outlines every task required to build, test, and package the Reno
 ---
 
 ## 5. Entry Point Parser
-- [ ] In `__init__.py` (or a separate module), create an entry point called `RenogyParser`:
-  - [ ] Implement a static method `parse(raw_data, model)` that:
-    - [ ] Checks the provided model
-    - [ ] Routes the raw data to `RoverParser` if the model is "rover"
-    - [ ] Logs a warning and returns an empty dictionary if the model is unsupported
-- [ ] Integrate `RenogyParser` with the rest of the package
+- [x] In `__init__.py` (or a separate module), create an entry point called `RenogyParser`:
+  - [x] Implement a static method `parse(raw_data, model)` that:
+    - [x] Checks the provided model
+    - [x] Routes the raw data to `RoverParser` if the model is "rover"
+    - [x] Logs a warning and returns an empty dictionary if the model is unsupported
+- [x] Integrate `RenogyParser` with the rest of the package
 
 ---
 
