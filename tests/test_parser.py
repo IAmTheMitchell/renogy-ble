@@ -10,7 +10,7 @@ import logging
 import unittest
 
 # Import the modules to be tested
-from parser import RenogyBaseParser, RoverParser, parse_value
+from renogy_ble.parser import RenogyBaseParser, RoverParser, parse_value
 from unittest.mock import patch
 
 
@@ -49,7 +49,7 @@ class TestRenogyBaseParser(unittest.TestCase):
         """Set up the test environment."""
         self.parser = RenogyBaseParser()
 
-    @patch("parser.logger")
+    @patch("renogy_ble.parser.logger")
     def test_parse_unsupported_model(self, mock_logger):
         """Test parsing data with an unsupported model."""
         # Create some dummy data
@@ -81,7 +81,7 @@ class TestRenogyBaseParser(unittest.TestCase):
             }
         }
 
-        with patch("parser.REGISTER_MAP", test_register_map):
+        with patch("renogy_ble.parser.REGISTER_MAP", test_register_map):
             parser = RenogyBaseParser()
 
             # Create test data with values that should produce predictable results
@@ -106,12 +106,12 @@ class TestRenogyBaseParser(unittest.TestCase):
         # Set up logging capture
         log_capture = io.StringIO()
         log_handler = logging.StreamHandler(log_capture)
-        logger = logging.getLogger("parser")
+        logger = logging.getLogger("renogy_ble.parser")
         logger.addHandler(log_handler)
         logger.setLevel(logging.WARNING)
 
         try:
-            with patch("parser.REGISTER_MAP", test_register_map):
+            with patch("renogy_ble.parser.REGISTER_MAP", test_register_map):
                 parser = RenogyBaseParser()
 
                 # Create data that's only enough for the first field
@@ -168,14 +168,14 @@ class TestIntegration(unittest.TestCase):
         # Capture log output for testing warnings
         self.log_capture = io.StringIO()
         self.log_handler = logging.StreamHandler(self.log_capture)
-        logger = logging.getLogger("parser")
+        logger = logging.getLogger("renogy_ble.parser")
         logger.addHandler(self.log_handler)
         logger.setLevel(logging.WARNING)
 
     def tearDown(self):
         """Clean up after the tests."""
         # Remove the log handler
-        logger = logging.getLogger("parser")
+        logger = logging.getLogger("renogy_ble.parser")
         logger.removeHandler(self.log_handler)
 
     def test_rover_model_parsing(self):
@@ -254,7 +254,7 @@ class TestIntegration(unittest.TestCase):
             }
         }
 
-        with patch("parser.REGISTER_MAP", test_register_map):
+        with patch("renogy_ble.parser.REGISTER_MAP", test_register_map):
             # Create a new parser instance with the patched REGISTER_MAP
             parser = RenogyBaseParser()
 

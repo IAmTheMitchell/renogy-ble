@@ -7,7 +7,7 @@ according to the register mappings defined in register_map.py
 
 import logging
 
-from register_map import REGISTER_MAP
+from renogy_ble.register_map import REGISTER_MAP
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)

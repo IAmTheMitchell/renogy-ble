@@ -6,9 +6,8 @@ It supports different device models by routing the parsing to model-specific par
 """
 
 import logging
-from parser import RoverParser
-
-from register_map import REGISTER_MAP
+from renogy_ble.parser import RoverParser
+from renogy_ble.register_map import REGISTER_MAP
 
 # Set up logging
 logger = logging.getLogger(__name__)
