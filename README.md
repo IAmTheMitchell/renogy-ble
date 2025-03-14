@@ -1,6 +1,6 @@
 # Renogy BLE
 
-A Python library for parsing Bluetooth Low Energy (BLE) data from Renogy solar charge controllers.
+A Python library for parsing Bluetooth Low Energy (BLE) data from Renogy devices.
 
 ## Overview
 
