@@ -13,7 +13,7 @@ from renogy_ble.register_map import REGISTER_MAP
 logger = logging.getLogger(__name__)
 
 
-def parse_value(data, offset, length, byte_order):
+def parse_value(data, offset, length, byte_order, scale=None, bit_offset=None):
     """
     Parse a value from raw byte data at the specified offset and length.
 
@@ -22,9 +22,11 @@ def parse_value(data, offset, length, byte_order):
         offset (int): The starting offset in the data
         length (int): The length of data to parse in bytes
         byte_order (str): The byte order ('big' or 'little')
+        scale (float, optional): Scale factor to apply to the value
+        bit_offset (int, optional): Bit offset for boolean or bit flag values
 
     Returns:
-        int: The parsed integer value
+        int or float: The parsed value
     """
     # Check if we have enough data
     if offset + length > len(data):
@@ -36,7 +38,17 @@ def parse_value(data, offset, length, byte_order):
     value_bytes = data[offset : offset + length]
 
     # Convert bytes to integer using the specified byte order
-    return int.from_bytes(value_bytes, byteorder=byte_order)
+    value = int.from_bytes(value_bytes, byteorder=byte_order)
+
+    # Handle bit offset if specified (for boolean fields)
+    if bit_offset is not None:
+        value = (value >> bit_offset) & 1
+
+    # Apply scaling if specified
+    if scale is not None:
+        value = value * scale
+
+    return value
 
 
 class RenogyBaseParser:
@@ -82,16 +94,15 @@ class RenogyBaseParser:
 
         # Iterate through each field in the model map
         for field_name, field_info in model_map.items():
-            register = field_info["register"]
+            offset = field_info["offset"]
             length = field_info["length"]
             byte_order = field_info["byte_order"]
-
-            # Calculate the offset in the data based on the register address
-            offset = register - 256  # Assuming register 256 maps to offset 0
+            scale = field_info.get("scale")
+            bit_offset = field_info.get("bit_offset")
 
             try:
                 # Parse the value
-                value = parse_value(data, offset, length, byte_order)
+                value = parse_value(data, offset, length, byte_order, scale, bit_offset)
 
                 # Apply mapping if it exists
                 if "map" in field_info and value in field_info["map"]:
@@ -99,20 +110,21 @@ class RenogyBaseParser:
 
                 result[field_name] = value
 
-            except ValueError:
+            except ValueError as e:
                 # If there's not enough data, log a warning and continue
                 logger.warning(
                     "Unexpected data length, partial parsing attempted. "
                     "Expected at least %d bytes for field '%s' at offset %d, "
-                    "but data length is only %d bytes.",
+                    "but data length is only %d bytes. Error: %s",
                     offset + length,
                     field_name,
                     offset,
                     len(data),
+                    str(e),
                 )
 
                 # We can't parse any more fields if we've run out of data
-                break
+                continue
 
         return result
 
