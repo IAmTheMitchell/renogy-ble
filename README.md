@@ -23,14 +23,14 @@ Basic usage example:
 from renogy_ble import RenogyParser
 
 # Raw BLE data received from your Renogy device
-raw_data = b"\x00\x81\x00\xFA"  # Example data
+raw_data = b"\xff\x03\x02\x00\x04\x90S"  # Example data
 
-# Parse the data for a specific model
-parsed_data = RenogyParser.parse(raw_data, model="rover")
+# Parse the data for a specific model and register
+parsed_data = RenogyParser.parse(raw_data, model="rover", register=57348)
 
 # Use the parsed data
 print(parsed_data)
-# Example output: {'battery_voltage': 129, 'pv_power': 250}
+# Example output: {'battery_type': 'lithium'}
 ```
 
 ## Features
@@ -43,7 +43,9 @@ print(parsed_data)
 ## Data Handling
 
 ### Input Format
-The library accepts raw BLE Modbus response bytes and requires you to specify the device model (e.g., `model="rover"`).
+The library accepts raw BLE Modbus response bytes and requires you to specify:
+- The device model (e.g., `model="rover"`)
+- The register number being parsed (e.g., `register=256`)
 
 ### Output Format
 Returns a flat dictionary of raw values:

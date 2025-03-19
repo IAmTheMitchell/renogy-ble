@@ -8,10 +8,10 @@ parses raw byte data according to the register mapping definitions.
 import io
 import logging
 import unittest
+from unittest.mock import patch
 
 # Import the modules to be tested
 from renogy_ble.parser import RenogyBaseParser, RoverParser, parse_value
-from unittest.mock import patch
 
 
 class TestParseValue(unittest.TestCase):
@@ -56,7 +56,7 @@ class TestRenogyBaseParser(unittest.TestCase):
         data = bytes([0x01, 0x02, 0x03, 0x04])
 
         # Parse with an unsupported model
-        result = self.parser.parse(data, "unsupported_model")
+        result = self.parser.parse(data, "unsupported_model", 256)
 
         # Check that the result is an empty dictionary
         self.assertEqual(result, {})
@@ -71,12 +71,18 @@ class TestRenogyBaseParser(unittest.TestCase):
         # Create a mock parser with a controlled register map
         test_register_map = {
             "test_model": {
-                "test_field": {"register": 256, "length": 2, "byte_order": "big"},
+                "test_field": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 0,
+                },
                 "test_field_with_map": {
-                    "register": 258,
+                    "register": 256,
                     "length": 1,
                     "byte_order": "big",
                     "map": {1: "on", 0: "off"},
+                    "offset": 2,
                 },
             }
         }
@@ -88,7 +94,7 @@ class TestRenogyBaseParser(unittest.TestCase):
             data = bytes([0x00, 0x7B, 0x01])  # 0x007B = 123, 0x01 = 1 ("on" in map)
 
             # Parse with our test model
-            result = parser.parse(data, "test_model")
+            result = parser.parse(data, "test_model", 256)
 
             # Check the result contains the expected fields
             self.assertEqual(result, {"test_field": 123, "test_field_with_map": "on"})
@@ -98,8 +104,18 @@ class TestRenogyBaseParser(unittest.TestCase):
         # Create a mock parser with a controlled register map
         test_register_map = {
             "test_model": {
-                "test_field1": {"register": 256, "length": 2, "byte_order": "big"},
-                "test_field2": {"register": 258, "length": 2, "byte_order": "big"},
+                "test_field1": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 0,
+                },
+                "test_field2": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 2,
+                },
             }
         }
 
@@ -118,7 +134,7 @@ class TestRenogyBaseParser(unittest.TestCase):
                 data = bytes([0x00, 0x2A])  # 0x002A = 42
 
                 # Parse with our test model
-                result = parser.parse(data, "test_model")
+                result = parser.parse(data, "test_model", 256)
 
                 # Check the result contains only the first field
                 self.assertEqual(len(result), 1)
@@ -148,14 +164,14 @@ class TestRoverParser(unittest.TestCase):
         # Create some dummy data
         data = bytes([0x01, 0x02, 0x03, 0x04])
 
-        # Call parse_data
-        result = self.parser.parse_data(data)
+        # Call parse_data with the register parameter (fixed)
+        result = self.parser.parse_data(data, register=256)
 
         # Check the result matches what we expect
         self.assertEqual(result, {"battery_voltage": 12.6})
 
         # Check that parse was called with the correct arguments
-        mock_parse.assert_called_once_with(data, "rover")
+        mock_parse.assert_called_once_with(data, "rover", 256)
 
 
 class TestIntegration(unittest.TestCase):
@@ -172,85 +188,84 @@ class TestIntegration(unittest.TestCase):
         logger.addHandler(self.log_handler)
         logger.setLevel(logging.WARNING)
 
+        # Real sample data from test.py
+        self.real_data = {
+            12: b"\xff\x03\x10  RNG-CTRL-RVR407$",
+            26: b"\xff\x03\x02\x00\x10\x90\\",
+            256: b"\xff\x03D\x00d\x00\x90\x00\x04\x0e\x19\x00\x00\x00\x00\x00\x00\x00\xe8\x00\x04\x00\x01\x00\x00\x00\x8f\x00\x91\x00\x11\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02+\x00\x01\x00\x00\x00\x00\x13|\x00\x00\x00\x00\x00\x01\x01\x90\x00\x00\x00\x00\x00\x04\x00\x00\xa3\xd2",
+            57348: b"\xff\x03\x02\x00\x04\x90S",
+        }
+
     def tearDown(self):
         """Clean up after the tests."""
         # Remove the log handler
         logger = logging.getLogger("renogy_ble.parser")
         logger.removeHandler(self.log_handler)
 
-    def test_rover_model_parsing(self):
-        """Test parsing real data for the Rover model."""
-        # Create sample data that would match the registers in the Rover model
-        # This data should be long enough to cover all expected registers
-        data = bytes(
-            [
-                # Create a sample sequence long enough for the test
-                0x32,
-                0x00,
-                0x04,
-                0xD2,
-                0x01,
-                0x2C,
-                0x28,
-                0x01,
-                0x05,
-                0x0A,
-                0x00,
-                0x64,
-                0x00,
-                0xC8,
-                0x01,
-                0x90,
-                0x02,
-                0x58,
-                0x03,
-                0x20,
-                0x03,
-                0xE8,
-                0x04,
-                0xB0,
-                0x05,
-                0x78,
-                0x06,
-                0x40,
-                0x07,
-                0x08,
-                0x07,
-                0xD0,
-                0x08,
-                0x98,
-                0x09,
-                0x60,
-                0x0A,
-                0x28,
-                0x0A,
-                0xF0,
-                0x01,
-                0x00,
-                0x00,
-                0x00,
-                0x02,
-            ]
-        )
-
-        result = self.parser.parse(data, "rover")
-
-        # Verify we got some data back
+    def test_rover_model_parsing_register_12(self):
+        """Test parsing real device info data (register 12) for the Rover model."""
+        result = self.parser.parse(self.real_data[12], "rover", 12)
         self.assertIsInstance(result, dict)
-        self.assertGreater(len(result), 0)
+        self.assertIn("model", result)
+        self.assertEqual(result["model"], "RNG-CTRL-RVR")
 
-        # For battery_percentage specifically
-        if "battery_percentage" in result:
-            self.assertEqual(result["battery_percentage"], 0x3200)
+    def test_rover_model_parsing_register_26(self):
+        """Test parsing real device address data (register 26) for the Rover model."""
+        result = self.parser.parse(self.real_data[26], "rover", 26)
+        self.assertIsInstance(result, dict)
+        self.assertIn("device_id", result)
+        self.assertEqual(result["device_id"], 16)
+
+    def test_rover_model_parsing_register_256(self):
+        """Test parsing real charging info data (register 256) for the Rover model."""
+        result = self.parser.parse(self.real_data[256], "rover", 256)
+        self.assertIsInstance(result, dict)
+
+        # Test a few specific fields
+        self.assertIn("battery_voltage", result)
+        self.assertEqual(result["battery_voltage"], 14.4)
+
+        self.assertIn("battery_percentage", result)
+        self.assertEqual(result["battery_percentage"], 100)
+
+        self.assertIn("charging_status", result)
+        self.assertEqual(result["charging_status"], "boost")
+
+        # Check that we got the expected number of fields
+        self.assertGreaterEqual(
+            len(result), 18
+        )  # This should match the number of fields in register 256
+
+    def test_rover_model_parsing_register_57348(self):
+        """Test parsing real battery type data (register 57348) for the Rover model."""
+        result = self.parser.parse(self.real_data[57348], "rover", 57348)
+        self.assertIsInstance(result, dict)
+        self.assertIn("battery_type", result)
+        self.assertEqual(result["battery_type"], "lithium")
 
     def test_partial_data_parsing(self):
-        """Test parsing with truncated data for the Rover model."""
+        """Test parsing with truncated data for a specific register."""
         # Create a simplified register map for testing partial data
         test_register_map = {
             "rover": {
-                "field1": {"register": 256, "length": 2, "byte_order": "big"},
-                "field2": {"register": 258, "length": 2, "byte_order": "big"},
-                "field3": {"register": 260, "length": 2, "byte_order": "big"},
+                "field1": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 0,
+                },
+                "field2": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 2,
+                },
+                "field3": {
+                    "register": 256,
+                    "length": 2,
+                    "byte_order": "big",
+                    "offset": 4,
+                },
             }
         }
 
@@ -261,7 +276,7 @@ class TestIntegration(unittest.TestCase):
             # Create data that's only enough for the first field
             data = bytes([0x01, 0x02])
 
-            result = parser.parse(data, "rover")
+            result = parser.parse(data, "rover", 256)
 
             # Check that we only got the first field
             self.assertEqual(len(result), 1)
@@ -276,8 +291,7 @@ class TestIntegration(unittest.TestCase):
     def test_unsupported_model(self):
         """Test parsing with an unsupported model."""
         data = bytes([0x01, 0x02, 0x03, 0x04])
-
-        result = self.parser.parse(data, "nonexistent_model")
+        result = self.parser.parse(data, "nonexistent_model", 256)
 
         # Check that we get an empty dictionary
         self.assertEqual(result, {})

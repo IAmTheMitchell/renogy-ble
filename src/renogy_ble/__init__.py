@@ -6,6 +6,7 @@ It supports different device models by routing the parsing to model-specific par
 """
 
 import logging
+
 from renogy_ble.parser import RoverParser
 from renogy_ble.register_map import REGISTER_MAP
 
@@ -23,17 +24,18 @@ class RenogyParser:
     Entry point for parsing Renogy BLE device data.
 
     This class provides a static method to parse raw data from Renogy devices
-    based on the specified model.
+    based on the specified model and register.
     """
 
     @staticmethod
-    def parse(raw_data, model):
+    def parse(raw_data, model, register):
         """
-        Parse raw BLE data for the specified Renogy device model.
+        Parse raw BLE data for the specified Renogy device model and register.
 
         Args:
             raw_data (bytes): Raw byte data received from the device
             model (str): The device model (e.g., "rover")
+            register (int): The register number to parse
 
         Returns:
             dict: A dictionary containing the parsed values or an empty dictionary
@@ -47,7 +49,7 @@ class RenogyParser:
         # Route to the appropriate model-specific parser
         if model == "rover":
             parser = RoverParser()
-            return parser.parse_data(raw_data)
+            return parser.parse_data(raw_data, register)
 
         # This should not be reached if the model checking is comprehensive,
         # but included as a safeguard

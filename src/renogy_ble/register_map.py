@@ -29,6 +29,7 @@ REGISTER_MAP = {
             "length": 14,  # bytes 3-17
             "byte_order": "big",
             "offset": 3,
+            "data_type": "string",
         },
         # Device address section (register 26)
         "device_id": {"register": 26, "length": 1, "byte_order": "big", "offset": 4},
