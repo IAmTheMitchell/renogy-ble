@@ -22,7 +22,7 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/IAmTheMitchell/renogy-ble"
 "Bug Tracker" = "https://github.com/IAmTheMitchell/renogy-ble/issues"
-"Changelog" = "https://github.com/IAmTheMitchell/renogy-ha/blob/main/CHANGELOG.md"
+"Changelog" = "https://github.com/IAmTheMitchell/renogy-ble/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 license-files = []
