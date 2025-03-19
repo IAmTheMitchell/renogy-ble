@@ -70,6 +70,9 @@ The library is designed to be easily extensible for other Renogy models. To add 
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## References
+[cyrils/renogy-bt](https://github.com/cyrils/renogy-bt/tree/main)
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
