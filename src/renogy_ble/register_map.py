@@ -22,7 +22,7 @@ These mappings are used by the parser module to correctly interpret raw byte dat
 # }
 
 REGISTER_MAP = {
-    "rover": {
+    "controller": {
         # Device info section (register 12)
         "model": {
             "register": 12,
