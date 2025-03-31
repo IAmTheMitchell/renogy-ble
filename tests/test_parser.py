@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 # Import the modules to be tested
-from renogy_ble.parser import RenogyBaseParser, RoverParser, parse_value
+from renogy_ble.parser import ControllerParser, RenogyBaseParser, parse_value
 
 
 class TestParseValue(unittest.TestCase):
@@ -153,9 +153,9 @@ class TestRoverParser(unittest.TestCase):
 
     def setUp(self):
         """Set up the test environment."""
-        self.parser = RoverParser()
+        self.parser = ControllerParser()
 
-    @patch.object(RoverParser, "parse")
+    @patch.object(ControllerParser, "parse")
     def test_parse_data(self, mock_parse):
         """Test that parse_data calls the base parse method with the rover model."""
         # Set up mock to return a dummy result

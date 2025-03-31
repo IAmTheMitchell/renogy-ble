@@ -131,34 +131,33 @@ class RenogyBaseParser:
         return result
 
 
-class RoverParser(RenogyBaseParser):
+class ControllerParser(RenogyBaseParser):
     """
-    Parser specifically for Renogy Rover charge controllers.
+    Parser specifically for Renogy charge controllers.
 
-    This class extends the RenogyBaseParser to provide any Rover-specific parsing
+    This class extends the RenogyBaseParser to provide any controller-specific parsing
     functionality that may be needed.
     """
 
     def __init__(self):
-        """Initialize the Rover parser."""
+        """Initialize the controller parser."""
         super().__init__()
-        self.model = "rover"
+        self.type = "controller"
 
     def parse_data(self, data, register=None):
         """
-        Parse raw data from a Rover device.
+        Parse raw data from a controller device.
 
         Args:
             data (bytes): The raw byte data received from the device
             register (int, optional): The register number to parse. If not provided,
                                       returns an empty dictionary.
         Returns:
-            dict: A dictionary containing the parsed values specific to the Rover model
+            dict: A dictionary containing the parsed values specific to the device type
         """
-        # Need register to be provided now
         if register is None:
             logger.warning("Register parameter is required but not provided")
             return {}
 
-        # Use the base parser's parse method with the rover model
-        return self.parse(data, self.model, register)
+        # Use the base parser's parse method with the device type
+        return self.parse(data, self.type, register)
