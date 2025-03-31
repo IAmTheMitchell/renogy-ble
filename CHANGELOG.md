@@ -5,8 +5,7 @@
     - Allows for faster expansion to new supported devices
 
 ### Improvements
-- Migrate to use pytest intstead of unittest
-
+- Migrate to use pytest instead of unittest
 ## [0.1.3] - 2025-03-19
 ### Fixed
 - Fixed changelog URL in pyproject.toml
