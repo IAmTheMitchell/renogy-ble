@@ -157,7 +157,7 @@ class TestRoverParser(unittest.TestCase):
 
     @patch.object(ControllerParser, "parse")
     def test_parse_data(self, mock_parse):
-        """Test that parse_data calls the base parse method with the rover model."""
+        """Test that parse_data calls the base parse method with the controller type."""
         # Set up mock to return a dummy result
         mock_parse.return_value = {"battery_voltage": 12.6}
 
@@ -171,7 +171,7 @@ class TestRoverParser(unittest.TestCase):
         self.assertEqual(result, {"battery_voltage": 12.6})
 
         # Check that parse was called with the correct arguments
-        mock_parse.assert_called_once_with(data, "rover", 256)
+        mock_parse.assert_called_once_with(data, "controller", 256)
 
 
 class TestIntegration(unittest.TestCase):
@@ -203,22 +203,22 @@ class TestIntegration(unittest.TestCase):
         logger.removeHandler(self.log_handler)
 
     def test_rover_model_parsing_register_12(self):
-        """Test parsing real device info data (register 12) for the Rover model."""
-        result = self.parser.parse(self.real_data[12], "rover", 12)
+        """Test parsing real device info data (register 12) for the controller type."""
+        result = self.parser.parse(self.real_data[12], "controller", 12)
         self.assertIsInstance(result, dict)
         self.assertIn("model", result)
         self.assertEqual(result["model"], "RNG-CTRL-RVR")
 
     def test_rover_model_parsing_register_26(self):
-        """Test parsing real device address data (register 26) for the Rover model."""
-        result = self.parser.parse(self.real_data[26], "rover", 26)
+        """Test parsing real device address data (register 26) for the controller type."""
+        result = self.parser.parse(self.real_data[26], "controller", 26)
         self.assertIsInstance(result, dict)
         self.assertIn("device_id", result)
         self.assertEqual(result["device_id"], 16)
 
     def test_rover_model_parsing_register_256(self):
-        """Test parsing real charging info data (register 256) for the Rover model."""
-        result = self.parser.parse(self.real_data[256], "rover", 256)
+        """Test parsing real charging info data (register 256) for the controller type."""
+        result = self.parser.parse(self.real_data[256], "controller", 256)
         self.assertIsInstance(result, dict)
 
         # Test a few specific fields
@@ -237,8 +237,8 @@ class TestIntegration(unittest.TestCase):
         )  # This should match the number of fields in register 256
 
     def test_rover_model_parsing_register_57348(self):
-        """Test parsing real battery type data (register 57348) for the Rover model."""
-        result = self.parser.parse(self.real_data[57348], "rover", 57348)
+        """Test parsing real battery type data (register 57348) for the controller type."""
+        result = self.parser.parse(self.real_data[57348], "controller", 57348)
         self.assertIsInstance(result, dict)
         self.assertIn("battery_type", result)
         self.assertEqual(result["battery_type"], "lithium")
@@ -247,7 +247,7 @@ class TestIntegration(unittest.TestCase):
         """Test parsing with truncated data for a specific register."""
         # Create a simplified register map for testing partial data
         test_register_map = {
-            "rover": {
+            "controller": {
                 "field1": {
                     "register": 256,
                     "length": 2,
@@ -276,7 +276,7 @@ class TestIntegration(unittest.TestCase):
             # Create data that's only enough for the first field
             data = bytes([0x01, 0x02])
 
-            result = parser.parse(data, "rover", 256)
+            result = parser.parse(data, "controller", 256)
 
             # Check that we only got the first field
             self.assertEqual(len(result), 1)
