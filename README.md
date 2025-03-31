@@ -7,7 +7,7 @@ A Python library for parsing Bluetooth Low Energy (BLE) data from Renogy devices
 Library for parsing raw BLE Modbus data from Renogy devices with BT-1 and BT-2 Bluetooth modules.
 
 Currently supported devices:
-- Renogy Rover charge controllers
+- Renogy charge controllers (such as Rover, Wanderer, Adventurer)
 
 ## Installation
 
@@ -26,7 +26,7 @@ from renogy_ble import RenogyParser
 raw_data = b"\xff\x03\x02\x00\x04\x90S"  # Example data
 
 # Parse the data for a specific model and register
-parsed_data = RenogyParser.parse(raw_data, model="rover", register=57348)
+parsed_data = RenogyParser.parse(raw_data, type="controller", register=57348)
 
 # Use the parsed data
 print(parsed_data)
@@ -44,7 +44,7 @@ print(parsed_data)
 
 ### Input Format
 The library accepts raw BLE Modbus response bytes and requires you to specify:
-- The device model (e.g., `model="rover"`)
+- The device type (e.g., `type="controller"`)
 - The register number being parsed (e.g., `register=256`)
 
 ### Output Format
@@ -60,10 +60,10 @@ Returns a flat dictionary of raw values:
 
 ## Extending for Other Models
 
-The library is designed to be easily extensible for other Renogy models. To add support for a new model:
+The library is designed to be easily extensible for other Renogy device types. To add support for a new type:
 
-1. Update the `REGISTER_MAP` in `register_map.py` with the new model's register mapping
-2. Create a new model-specific parser class in `parser.py` (if needed)
+1. Update the `REGISTER_MAP` in `register_map.py` with the new device type's register mapping
+2. Create a new type-specific parser class in `parser.py` (if needed)
 3. Update the `RenogyParser.parse()` method to route to your new parser
 
 ## Contributing
