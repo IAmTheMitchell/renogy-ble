@@ -29,3 +29,7 @@ classifiers = [
 [tool.setuptools]
 license-files = []
 # Fix from https://github.com/astral-sh/uv/issues/9513#issuecomment-2519527822
+
+[tool.semantic_release]
+branch = "main"
+version_toml = ["pyproject.toml:project.version"]
