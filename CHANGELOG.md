@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.1 (2025-04-02)
+
+### Bug Fixes
+
+- Configure semantic release
+  ([`0accb9a`](https://github.com/IAmTheMitchell/renogy-ble/commit/0accb9a87e6444dc05e2db0dfecde807a3619b10))
+
+
 ## v0.2.0 (2025-04-02)
 
 ### Chores
