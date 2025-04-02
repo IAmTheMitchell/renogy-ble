@@ -9,6 +9,10 @@ Library for parsing raw BLE Modbus data from Renogy devices with BT-1 and BT-2 B
 Currently supported devices:
 - Renogy charge controllers (such as Rover, Wanderer, Adventurer)
 
+Future planned support:
+- Renogy batteries
+- Renogy inverters
+
 ## Installation
 
 ```bash
