@@ -39,6 +39,9 @@ jobs:
       - name: Run tests
         run: uv run pytest tests
 
+      - name: Lint with Ruff
+        run: uv run ruff check . --output-format=github
+
   release:
     runs-on: ubuntu-latest
     environment: release

@@ -17,6 +17,7 @@ classifiers = [
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
+    "ruff>=0.12.3",
 ]
 
 [project.urls]
@@ -31,3 +32,13 @@ build-backend = "hatchling.build"
 [tool.semantic_release]
 branch = "main"
 version_toml = ["pyproject.toml:project.version"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["I", "E", "F"]  # I = isort, E = pycodestyle, F = pyflakes
+
+[tool.ruff.format]
+quote-style = "double"
