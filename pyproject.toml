@@ -1,24 +1,22 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "renogy-ble"
 version = "0.2.1"
 description = "A library for parsing Renogy BLE data"
 readme = "README.md"
-requires-python = '>=3.6'
-dependencies = [
-    "pytest>=7.0.1",
-]
+requires-python = '>=3.11'
+dependencies = []
 authors = [
     {name = "Mitchell Carlson", email = "mitchell.carlson.pro@gmail.com"}
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
 ]
 
 [project.urls]
@@ -26,9 +24,9 @@ classifiers = [
 "Bug Tracker" = "https://github.com/IAmTheMitchell/renogy-ble/issues"
 "Changelog" = "https://github.com/IAmTheMitchell/renogy-ble/blob/main/CHANGELOG.md"
 
-[tool.setuptools]
-license-files = []
-# Fix from https://github.com/astral-sh/uv/issues/9513#issuecomment-2519527822
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.semantic_release]
 branch = "main"
