@@ -59,12 +59,14 @@ REGISTER_MAP = {
             "length": 1,
             "byte_order": "big",
             "offset": 9,
+            "signed": True,
         },
         "battery_temperature": {
             "register": 256,
             "length": 1,
             "byte_order": "big",
             "offset": 10,
+            "signed": True,
         },
         "load_status": {
             "register": 256,

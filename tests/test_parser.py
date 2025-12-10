@@ -33,6 +33,14 @@ def test_parse_value_little_endian():
     assert value == 0x0403
 
 
+def test_parse_value_signed_byte():
+    """Test parsing a signed byte value."""
+    data = bytes([0xFF, 0x7F])
+
+    assert parse_value(data, 0, 1, "big", signed=True) == -1
+    assert parse_value(data, 1, 1, "big", signed=True) == 127
+
+
 def test_parse_value_insufficient_data():
     """Test parsing a value with insufficient data."""
     data = bytes([0x01, 0x02, 0x03])
@@ -250,6 +258,22 @@ def test_controller_parsing_register_256(integration_parser, integration_test_da
 
     # Check that we got the expected number of fields
     assert len(result) >= 18  # This should match the number of fields in register 256
+
+
+def test_controller_negative_temperatures(
+    integration_parser, integration_test_data
+):
+    """Ensure temperature bytes are parsed as signed values."""
+    parser, _ = integration_parser
+    data = bytearray(integration_test_data[256])
+
+    data[9] = 0xFF  # controller_temperature -> -1
+    data[10] = 0xF0  # battery_temperature -> -16
+
+    result = parser.parse(bytes(data), "controller", 256)
+
+    assert result["controller_temperature"] == -1
+    assert result["battery_temperature"] == -16
 
 
 def test_controller_parsing_register_57348(integration_parser, integration_test_data):
