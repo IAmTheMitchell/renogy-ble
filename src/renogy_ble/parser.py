@@ -14,7 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 def parse_value(
-    data, offset, length, byte_order, scale=None, bit_offset=None, data_type="int"
+    data,
+    offset,
+    length,
+    byte_order,
+    scale=None,
+    bit_offset=None,
+    data_type="int",
+    signed=False,
 ):
     """
     Parse a value from raw byte data at the specified offset and length.
@@ -28,6 +35,7 @@ def parse_value(
         bit_offset (int, optional): Bit offset for boolean or bit flag values
         data_type (str, optional): The type of data to parse; 'int' (default) or
             'string'
+        signed (bool, optional): Whether to interpret integer values as signed.
 
     Returns:
         int, float, or str: The parsed value
@@ -52,7 +60,7 @@ def parse_value(
             raise ValueError(f"Error decoding string: {e}")
     else:
         # Convert bytes to integer using the specified byte order
-        value = int.from_bytes(value_bytes, byteorder=byte_order)
+        value = int.from_bytes(value_bytes, byteorder=byte_order, signed=signed)
 
         # Handle bit offset if specified (for boolean fields)
         if bit_offset is not None:
@@ -110,10 +118,18 @@ class RenogyBaseParser:
             scale = field_info.get("scale")
             bit_offset = field_info.get("bit_offset")
             data_type = field_info.get("data_type", "int")
+            signed = field_info.get("signed", False)
 
             try:
                 value = parse_value(
-                    data, offset, length, byte_order, scale, bit_offset, data_type
+                    data,
+                    offset,
+                    length,
+                    byte_order,
+                    scale=scale,
+                    bit_offset=bit_offset,
+                    data_type=data_type,
+                    signed=signed,
                 )
 
                 # Apply mapping if it exists
