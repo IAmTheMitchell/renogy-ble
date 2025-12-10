@@ -1,5 +1,8 @@
 # Renogy BLE
 
+![Tests](https://github.com/IAmTheMitchell/renogy-ble/actions/workflows/test.yml/badge.svg)
+![Release](https://github.com/IAmTheMitchell/renogy-ble/actions/workflows/release.yml/badge.svg)
+
 A Python library for parsing Bluetooth Low Energy (BLE) data from Renogy devices.
 
 ## Overview
@@ -7,9 +10,11 @@ A Python library for parsing Bluetooth Low Energy (BLE) data from Renogy devices
 Library for parsing raw BLE Modbus data from Renogy devices with BT-1 and BT-2 Bluetooth modules.
 
 Currently supported devices:
+
 - Renogy charge controllers (such as Rover, Wanderer, Adventurer)
 
 Future planned support:
+
 - Renogy batteries
 - Renogy inverters
 
@@ -47,11 +52,14 @@ print(parsed_data)
 ## Data Handling
 
 ### Input Format
+
 The library accepts raw BLE Modbus response bytes and requires you to specify:
+
 - The device type (e.g., `type="controller"`)
 - The register number being parsed (e.g., `register=256`)
 
 ### Output Format
+
 Returns a flat dictionary of raw values:
 
 ```python
@@ -75,6 +83,7 @@ The library is designed to be easily extensible for other Renogy device types. T
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## References
+
 [cyrils/renogy-bt](https://github.com/cyrils/renogy-bt/tree/main)
 
 ## License

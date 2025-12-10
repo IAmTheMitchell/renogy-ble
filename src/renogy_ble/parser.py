@@ -26,7 +26,8 @@ def parse_value(
         byte_order (str): The byte order ('big' or 'little')
         scale (float, optional): Scale factor to apply to the value
         bit_offset (int, optional): Bit offset for boolean or bit flag values
-        data_type (str, optional): The type of data to parse; 'int' (default) or 'string'
+        data_type (str, optional): The type of data to parse; 'int' (default) or
+            'string'
 
     Returns:
         int, float, or str: The parsed value
@@ -34,7 +35,10 @@ def parse_value(
     # Check if we have enough data
     if offset + length > len(data):
         raise ValueError(
-            f"Data length ({len(data)}) is not sufficient to read {length} bytes at offset {offset}"
+            (
+                f"Data length ({len(data)}) is not sufficient to read {length} bytes"
+                f" at offset {offset}"
+            )
         )
 
     # Extract the bytes at the specified offset and length
@@ -83,7 +87,8 @@ class RenogyBaseParser:
             register (int): The register number to parse
 
         Returns:
-            dict: A dictionary containing the parsed values for fields belonging to the specified register
+            dict: A dictionary containing the parsed values for fields belonging to
+                the specified register
         """
         result = {}
 
@@ -94,7 +99,7 @@ class RenogyBaseParser:
 
         model_map = self.register_map[model]
 
-        # Iterate through each field in the model map that belongs to the specified register
+        # Iterate through fields in the model map that belong to the given register.
         for field_name, field_info in model_map.items():
             if field_info.get("register") != register:
                 continue
@@ -119,7 +124,11 @@ class RenogyBaseParser:
 
             except ValueError as e:
                 logger.warning(
-                    "Unexpected data length, partial parsing attempted. Expected at least %d bytes for field '%s' at offset %d, but data length is only %d bytes. Error: %s",
+                    (
+                        "Unexpected data length, partial parsing attempted. Expected"
+                        " at least %d bytes for field '%s' at offset %d, but data"
+                        " length is only %d bytes. Error: %s"
+                    ),
                     offset + length,
                     field_name,
                     offset,
