@@ -1,0 +1,80 @@
+name: Beta Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: Release Please branch to build from
+        required: false
+        default: release-please--main
+      beta_iteration:
+        description: Optional beta iteration identifier (defaults to run number)
+        required: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish-beta:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'release-please--'))
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.release_branch || 'release-please--main') || github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Derive beta version
+        id: version
+        env:
+          BETA_ITERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.beta_iteration || '' }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import re
+          import sys
+
+          pyproject = Path("pyproject.toml")
+          content = pyproject.read_text(encoding="utf-8")
+
+          match = re.search(r'^version\s*=\s*"(?P<version>[^"]+)"', content, flags=re.MULTILINE)
+          if not match:
+            sys.exit("Version not found in pyproject.toml")
+
+          base_version = match.group("version")
+          iteration = os.environ.get("BETA_ITERATION") or os.environ.get("GITHUB_RUN_NUMBER")
+          beta_version = f"{base_version}b{iteration}"
+
+          new_content = re.sub(
+            r'^version\s*=\s*".*"',
+            f'version = "{beta_version}"',
+            content,
+            count=1,
+            flags=re.MULTILINE,
+          )
+          pyproject.write_text(new_content, encoding="utf-8")
+
+          print(f"Publishing beta version {beta_version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"beta_version={beta_version}\n")
+          PY
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish beta to PyPI
+        run: uv publish
