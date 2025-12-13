@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## [0.2.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v0.2.1...v0.2.2) (2025-12-13)
+
+
+### Bug Fixes
+
+* support signed integers for temperatures ([03cb4cf](https://github.com/IAmTheMitchell/renogy-ble/commit/03cb4cfc4204fee76f9c5930c6285f4bc08b155b))
+
+
+### Documentation
+
+* add AGENTS.md ([1994ef9](https://github.com/IAmTheMitchell/renogy-ble/commit/1994ef9b1185d41165db6d623d5f7a56de428ba0))
+* update readme ci labels ([d25675a](https://github.com/IAmTheMitchell/renogy-ble/commit/d25675a6ab2f4791c10c2ff30223b0de9706bdda))
+
 ## v0.2.1 (2025-04-02)
 
 ### Bug Fixes
