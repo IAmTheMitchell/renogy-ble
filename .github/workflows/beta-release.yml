@@ -9,7 +9,7 @@ on:
       release_branch:
         description: Release Please branch to build from
         required: false
-        default: release-please--main
+        default: release-please--branches--main
       beta_iteration:
         description: Optional beta iteration identifier (defaults to run number)
         required: false
