@@ -4,7 +4,10 @@ version = "0.2.2"
 description = "A library for parsing Renogy BLE data"
 readme = "README.md"
 requires-python = '>=3.11'
-dependencies = []
+dependencies = [
+    "bleak>=0.22.3",
+    "bleak-retry-connector>=3.9.0",
+]
 authors = [
     {name = "Mitchell Carlson", email = "mitchell.carlson.pro@gmail.com"}
 ]

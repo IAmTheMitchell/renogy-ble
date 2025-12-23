@@ -7,11 +7,23 @@ It supports different device models by routing the parsing to type-specific pars
 
 import logging
 
-from renogy_ble.parser import ControllerParser
-from renogy_ble.register_map import REGISTER_MAP
+from renogy_ble.ble import (
+    COMMANDS,
+    DEFAULT_DEVICE_ID,
+    DEFAULT_DEVICE_TYPE,
+    MAX_NOTIFICATION_WAIT_TIME,
+    RENOGY_READ_CHAR_UUID,
+    RENOGY_WRITE_CHAR_UUID,
+    RenogyBLEDevice,
+    RenogyBleClient,
+    RenogyBleReadResult,
+    clean_device_name,
+    create_modbus_read_request,
+    modbus_crc,
+)
+from renogy_ble.renogy_parser import RenogyParser
 
 # Set up logging
-logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -19,39 +31,18 @@ logging.basicConfig(
 )
 
 
-class RenogyParser:
-    """
-    Entry point for parsing Renogy BLE device data.
-
-    This class provides a static method to parse raw data from Renogy devices
-    based on the specified type and register.
-    """
-
-    @staticmethod
-    def parse(raw_data, type, register):
-        """
-        Parse raw BLE data for the specified Renogy device type and register.
-
-        Args:
-            raw_data (bytes): Raw byte data received from the device
-            type (str): The device type (e.g., "controller" or "battery")
-            register (int): The register number to parse
-
-        Returns:
-            dict: A dictionary containing the parsed values or an empty dictionary
-                 if the model is not supported
-        """
-        # Check if the model is supported in the register map
-        if type not in REGISTER_MAP:
-            logger.warning("Unsupported type: %s", type)
-            return {}
-
-        # Route to the appropriate model-specific parser
-        if type == "controller":
-            parser = ControllerParser()
-            return parser.parse_data(raw_data, register)
-
-        # This should not be reached if the model checking is comprehensive,
-        # but included as a safeguard
-        logger.warning("Type %s is in REGISTER_MAP but no parser is implemented", type)
-        return {}
+__all__ = [
+    "COMMANDS",
+    "DEFAULT_DEVICE_ID",
+    "DEFAULT_DEVICE_TYPE",
+    "MAX_NOTIFICATION_WAIT_TIME",
+    "RENOGY_READ_CHAR_UUID",
+    "RENOGY_WRITE_CHAR_UUID",
+    "RenogyBLEDevice",
+    "RenogyBleClient",
+    "RenogyBleReadResult",
+    "RenogyParser",
+    "clean_device_name",
+    "create_modbus_read_request",
+    "modbus_crc",
+]
