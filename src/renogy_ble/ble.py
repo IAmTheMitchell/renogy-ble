@@ -311,6 +311,8 @@ class RenogyBleClient:
             logger.error("%s", error)
             return RenogyBleReadResult(False, dict(device.parsed_data), error)
 
+        device.parsed_data.clear()
+
         connection_kwargs = self._connection_kwargs()
         any_command_succeeded = False
         error: Exception | None = None
