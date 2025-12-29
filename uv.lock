@@ -37,16 +37,16 @@ wheels = [
 
 [[package]]
 name = "bleak-retry-connector"
-version = "4.4.4"
+version = "4.4.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "bleak" },
-    { name = "bluetooth-adapters", marker = "sys_platform == 'linux'" },
+    { name = "bleak", marker = "python_full_version < '3.14'" },
+    { name = "bluetooth-adapters", marker = "python_full_version < '3.14' and sys_platform == 'linux'" },
     { name = "dbus-fast", marker = "sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/41/384b005fcb7afccb9c02c50da2a4154033286927d38023219b70f5f09d8d/bleak_retry_connector-4.4.4.tar.gz", hash = "sha256:6716c159db3fc0a4a454fc325521d5cdf398594310238ce93b9f534c8608c36c", size = 18637, upload-time = "2025-11-12T18:16:40.264Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/08/8a62e114d5c1a7a0b4fee1c21a845061b0cc03bf617cc8ee7c27b2f164f9/bleak_retry_connector-4.4.3.tar.gz", hash = "sha256:70aa305dbd26eaf0586dd24723daac93ee3dd6a465e9782bf02b711fcbc4a527", size = 18652, upload-time = "2025-08-29T00:43:40.716Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/e5/caf6e1239967bb31edf97378a721113192e531e3d82e0441603ef2c9cf44/bleak_retry_connector-4.4.4-py3-none-any.whl", hash = "sha256:851c8a1c69821d89edc80f0e93278866e8cebc9c6a9d3aa683f454f9cbe8010a", size = 18620, upload-time = "2025-11-12T18:16:38.697Z" },
+    { url = "https://files.pythonhosted.org/packages/db/0f/445cbd2cd41ca6af16bcecce50eeda984d49b98e53ece1e80ad5b7fc98e4/bleak_retry_connector-4.4.3-py3-none-any.whl", hash = "sha256:17a478d525706488973b181fc789e960bc3fb4bcd94ccb0eee7b7b682442577b", size = 18610, upload-time = "2025-08-29T00:43:39.26Z" },
 ]
 
 [[package]]
@@ -240,7 +240,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bleak", specifier = "==1.0.1" },
-    { name = "bleak-retry-connector", specifier = "==4.4.4" },
+    { name = "bleak-retry-connector", specifier = "==4.4.3" },
 ]
 
 [package.metadata.requires-dev]
