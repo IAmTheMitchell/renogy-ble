@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
     UNAVAILABLE_RETRY_INTERVAL,
+    RenogyBLEDevice,
     clean_device_name,
     create_modbus_read_request,
     modbus_crc,
-    RenogyBLEDevice,
 )
 
 

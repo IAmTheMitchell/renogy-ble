@@ -58,7 +58,10 @@ def modbus_crc(data: bytes) -> tuple[int, int]:
                 crc = (crc >> 1) ^ 0xA001
             else:
                 crc >>= 1
-    return (crc & 0xFF, (crc >> 8) & 0xFF)
+    # Swap bytes so the low byte is sent first in Modbus frames.
+    crc_low = (crc >> 8) & 0xFF
+    crc_high = crc & 0xFF
+    return (crc_low, crc_high)
 
 
 def create_modbus_read_request(
@@ -326,7 +329,9 @@ class RenogyBleClient:
                 device.name,
                 str(connection_error),
             )
-            return RenogyBleReadResult(False, dict(device.parsed_data), connection_error)
+            return RenogyBleReadResult(
+                False, dict(device.parsed_data), connection_error
+            )
 
         try:
             logger.debug("Connected to device %s", device.name)
@@ -423,7 +428,9 @@ class RenogyBleClient:
                     if error is None:
                         error = exc
 
-        return RenogyBleReadResult(any_command_succeeded, dict(device.parsed_data), error)
+        return RenogyBleReadResult(
+            any_command_succeeded, dict(device.parsed_data), error
+        )
 
     def _connection_kwargs(self) -> dict[str, Any]:
         """Build connection kwargs for bleak-retry-connector."""

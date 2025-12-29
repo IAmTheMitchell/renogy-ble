@@ -260,9 +260,7 @@ def test_controller_parsing_register_256(integration_parser, integration_test_da
     assert len(result) >= 18  # This should match the number of fields in register 256
 
 
-def test_controller_negative_temperatures(
-    integration_parser, integration_test_data
-):
+def test_controller_negative_temperatures(integration_parser, integration_test_data):
     """Ensure temperature bytes are parsed as signed values."""
     parser, _ = integration_parser
     data = bytearray(integration_test_data[256])
