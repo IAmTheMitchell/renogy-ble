@@ -58,9 +58,8 @@ def modbus_crc(data: bytes) -> tuple[int, int]:
                 crc = (crc >> 1) ^ 0xA001
             else:
                 crc >>= 1
-    # Swap bytes so the low byte is sent first in Modbus frames.
-    crc_low = (crc >> 8) & 0xFF
-    crc_high = crc & 0xFF
+    crc_low = crc & 0xFF
+    crc_high = (crc >> 8) & 0xFF
     return (crc_low, crc_high)
 
 

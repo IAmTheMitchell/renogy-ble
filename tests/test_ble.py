@@ -24,7 +24,7 @@ def _mock_ble_device(name="BT-TH-TEST", address="AA:BB:CC:DD:EE:FF"):
 def test_modbus_crc_known_vector():
     payload = bytes([0x01, 0x03, 0x00, 0x00, 0x00, 0x01])
     crc_low, crc_high = modbus_crc(payload)
-    assert (crc_low, crc_high) == (0x0A, 0x84)
+    assert (crc_low, crc_high) == (0x84, 0x0A)
 
 
 def test_create_modbus_read_request_appends_crc():
