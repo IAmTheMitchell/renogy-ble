@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## [1.0.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v0.2.2...v1.0.0) (2026-01-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* migrate Bluetooth logic to library ([#12](https://github.com/IAmTheMitchell/renogy-ble/issues/12))
+
+### Features
+
+* migrate Bluetooth logic to library ([#12](https://github.com/IAmTheMitchell/renogy-ble/issues/12)) ([e9f1681](https://github.com/IAmTheMitchell/renogy-ble/commit/e9f1681e066853f4a74e2c2ea4584da8bf88f4da))
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([2cf808b](https://github.com/IAmTheMitchell/renogy-ble/commit/2cf808b659874e3f5e266c474780fe4a409ee267))
+
 ## [0.2.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v0.2.1...v0.2.2) (2025-12-13)
 
 
