@@ -5,6 +5,8 @@ This module contains register mapping definitions for different Renogy device mo
 These mappings are used by the parser module to correctly interpret raw byte data.
 """
 
+from typing import Literal, TypedDict
+
 # REGISTER_MAP structure:
 # {
 #     "model_name": {
@@ -21,7 +23,25 @@ These mappings are used by the parser module to correctly interpret raw byte dat
 #     # more models...
 # }
 
-REGISTER_MAP = {
+
+class FieldInfo(TypedDict, total=False):
+    """Describe how a register field should be decoded."""
+
+    register: int
+    length: int
+    byte_order: Literal["big", "little"]
+    offset: int
+    map: dict[int, str]
+    scale: float
+    bit_offset: int
+    data_type: Literal["int", "string"]
+    signed: bool
+
+
+RegisterMap = dict[str, dict[str, FieldInfo]]
+
+
+REGISTER_MAP: RegisterMap = {
     "controller": {
         # Device info section (register 12)
         "model": {

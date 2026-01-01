@@ -6,23 +6,24 @@ according to the register mappings defined in register_map.py
 """
 
 import logging
+from typing import Literal
 
-from renogy_ble.register_map import REGISTER_MAP
+from renogy_ble.register_map import REGISTER_MAP, RegisterMap
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
 
 def parse_value(
-    data,
-    offset,
-    length,
-    byte_order,
-    scale=None,
-    bit_offset=None,
-    data_type="int",
-    signed=False,
-):
+    data: bytes,
+    offset: int,
+    length: int,
+    byte_order: Literal["big", "little"],
+    scale: float | None = None,
+    bit_offset: int | None = None,
+    data_type: Literal["int", "string"] = "int",
+    signed: bool = False,
+) -> int | float | str:
     """
     Parse a value from raw byte data at the specified offset and length.
 
@@ -81,11 +82,13 @@ class RenogyBaseParser:
     using the register mappings defined in register_map.py.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the parser with the register map."""
-        self.register_map = REGISTER_MAP
+        self.register_map: RegisterMap = REGISTER_MAP
 
-    def parse(self, data, model, register):
+    def parse(
+        self, data: bytes, model: str, register: int
+    ) -> dict[str, int | float | str]:
         """
         Parse raw byte data for the specified device model and register.
 
@@ -98,7 +101,7 @@ class RenogyBaseParser:
             dict: A dictionary containing the parsed values for fields belonging to
                 the specified register
         """
-        result = {}
+        result: dict[str, int | float | str] = {}
 
         # Check if the model exists in our register map
         if model not in self.register_map:
@@ -132,9 +135,13 @@ class RenogyBaseParser:
                     signed=signed,
                 )
 
-                # Apply mapping if it exists
-                if "map" in field_info and value in field_info["map"]:
-                    value = field_info["map"][value]
+                value_map = field_info.get("map")
+                if (
+                    value_map is not None
+                    and isinstance(value, int)
+                    and value in value_map
+                ):
+                    value = value_map[value]
 
                 result[field_name] = value
 
@@ -164,12 +171,14 @@ class ControllerParser(RenogyBaseParser):
     functionality that may be needed.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the controller parser."""
         super().__init__()
         self.type = "controller"
 
-    def parse_data(self, data, register=None):
+    def parse_data(
+        self, data: bytes, register: int | None = None
+    ) -> dict[str, int | float | str]:
         """
         Parse raw data from a controller device.
 
