@@ -45,7 +45,7 @@ COMMANDS = {
 }
 
 
-def modbus_crc(data: bytes) -> tuple[int, int]:
+def modbus_crc(data: bytes | bytearray) -> tuple[int, int]:
     """Calculate the Modbus CRC16 of the given data.
 
     Returns a tuple (crc_low, crc_high) where the low byte is sent first.
@@ -83,7 +83,7 @@ def create_modbus_read_request(
     return frame
 
 
-def clean_device_name(name: str) -> str:
+def clean_device_name(name: str | None) -> str:
     """Clean the device name by removing unwanted characters."""
     if name:
         cleaned_name = name.strip()
