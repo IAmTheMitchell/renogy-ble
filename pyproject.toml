@@ -5,7 +5,7 @@ description = "A library for parsing Renogy BLE data"
 readme = "README.md"
 requires-python = '>=3.11'
 dependencies = [
-    "bleak==1.0.1",
+    "bleak>=1.0.1",
     "bleak-retry-connector>=4.4.3",
 ]
 authors = [
