@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.0.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.1...v1.0.2) (2026-01-08)
+
+
+### Bug Fixes
+
+* handle negative temps in parser ([#16](https://github.com/IAmTheMitchell/renogy-ble/issues/16)) ([8be77e3](https://github.com/IAmTheMitchell/renogy-ble/commit/8be77e3cdf871142009aa30950ab3c97864ba350))
+
 ## [1.0.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.0...v1.0.1) (2026-01-08)
 
 
