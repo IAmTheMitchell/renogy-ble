@@ -23,9 +23,7 @@ def parse_value(
     bit_offset: int | None = None,
     data_type: Literal["int", "string"] = "int",
     signed: bool = False,
-    signed_encoding: Literal["twos_complement", "sign_magnitude", "auto"] = (
-        "twos_complement"
-    ),
+    signed_encoding: Literal["twos_complement", "sign_magnitude"] = "twos_complement",
 ) -> int | float | str:
     """
     Parse a value from raw byte data at the specified offset and length.
@@ -41,7 +39,7 @@ def parse_value(
             'string'
         signed (bool, optional): Whether to interpret integer values as signed.
         signed_encoding (str, optional): Signed encoding for 1-byte values. Supports
-            'twos_complement' (default), 'sign_magnitude', or 'auto'.
+            'twos_complement' (default) or 'sign_magnitude'.
 
     Returns:
         int, float, or str: The parsed value
@@ -75,13 +73,6 @@ def parse_value(
                     value = -(raw_byte & 0x7F)
                 else:
                     value = raw_byte
-            elif signed_encoding == "auto" and raw_byte & 0x80:
-                # Temperatures shouldn't fall into extreme negatives for this domain.
-                # If two's complement yields a very negative value, prefer
-                # sign-magnitude decoding to avoid -127/-128 artifacts.
-                sign_magnitude = -(raw_byte & 0x7F)
-                if value <= -65 and sign_magnitude >= -63:
-                    value = sign_magnitude
 
         # Handle bit offset if specified (for boolean fields)
         if bit_offset is not None:

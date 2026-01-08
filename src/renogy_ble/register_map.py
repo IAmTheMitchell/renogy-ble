@@ -36,7 +36,7 @@ class FieldInfo(TypedDict, total=False):
     bit_offset: int
     data_type: Literal["int", "string"]
     signed: bool
-    signed_encoding: Literal["twos_complement", "sign_magnitude", "auto"]
+    signed_encoding: Literal["twos_complement", "sign_magnitude"]
 
 
 RegisterMap = dict[str, dict[str, FieldInfo]]
@@ -81,7 +81,7 @@ REGISTER_MAP: RegisterMap = {
             "byte_order": "big",
             "offset": 9,
             "signed": True,
-            "signed_encoding": "auto",
+            "signed_encoding": "sign_magnitude",
         },
         "battery_temperature": {
             "register": 256,
@@ -89,7 +89,7 @@ REGISTER_MAP: RegisterMap = {
             "byte_order": "big",
             "offset": 10,
             "signed": True,
-            "signed_encoding": "auto",
+            "signed_encoding": "sign_magnitude",
         },
         "load_status": {
             "register": 256,
