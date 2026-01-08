@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.0.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.0...v1.0.1) (2026-01-08)
+
+
+### Bug Fixes
+
+* support bleak 2.0.0+ ([#17](https://github.com/IAmTheMitchell/renogy-ble/issues/17)) ([a6c8df3](https://github.com/IAmTheMitchell/renogy-ble/commit/a6c8df396b76dd12d6e96b8dee15bc2dab075910))
+
 ## [1.0.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v0.2.2...v1.0.0) (2026-01-01)
 
 
