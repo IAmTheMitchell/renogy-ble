@@ -41,6 +41,20 @@ def test_parse_value_signed_byte():
     assert parse_value(data, 1, 1, "big", signed=True) == 127
 
 
+def test_parse_value_signed_byte_sign_magnitude():
+    """Test parsing a sign-magnitude signed byte value."""
+    data = bytes([0x81, 0x90])
+
+    assert (
+        parse_value(data, 0, 1, "big", signed=True, signed_encoding="sign_magnitude")
+        == -1
+    )
+    assert (
+        parse_value(data, 1, 1, "big", signed=True, signed_encoding="sign_magnitude")
+        == -16
+    )
+
+
 def test_parse_value_insufficient_data():
     """Test parsing a value with insufficient data."""
     data = bytes([0x01, 0x02, 0x03])
@@ -265,8 +279,8 @@ def test_controller_negative_temperatures(integration_parser, integration_test_d
     parser, _ = integration_parser
     data = bytearray(integration_test_data[256])
 
-    data[9] = 0xFF  # controller_temperature -> -1
-    data[10] = 0xF0  # battery_temperature -> -16
+    data[9] = 0x81  # controller_temperature -> -1 (sign-magnitude)
+    data[10] = 0x90  # battery_temperature -> -16 (sign-magnitude)
 
     result = parser.parse(bytes(data), "controller", 256)
 

@@ -23,6 +23,7 @@ def parse_value(
     bit_offset: int | None = None,
     data_type: Literal["int", "string"] = "int",
     signed: bool = False,
+    signed_encoding: Literal["twos_complement", "sign_magnitude"] = "twos_complement",
 ) -> int | float | str:
     """
     Parse a value from raw byte data at the specified offset and length.
@@ -37,6 +38,8 @@ def parse_value(
         data_type (str, optional): The type of data to parse; 'int' (default) or
             'string'
         signed (bool, optional): Whether to interpret integer values as signed.
+        signed_encoding (str, optional): Signed encoding for 1-byte values. Supports
+            'twos_complement' (default) or 'sign_magnitude'.
 
     Returns:
         int, float, or str: The parsed value
@@ -62,6 +65,14 @@ def parse_value(
     else:
         # Convert bytes to integer using the specified byte order
         value = int.from_bytes(value_bytes, byteorder=byte_order, signed=signed)
+
+        if signed and data_type == "int" and length == 1:
+            raw_byte = value_bytes[0]
+            if signed_encoding == "sign_magnitude":
+                if raw_byte & 0x80:
+                    value = -(raw_byte & 0x7F)
+                else:
+                    value = raw_byte
 
         # Handle bit offset if specified (for boolean fields)
         if bit_offset is not None:
@@ -122,6 +133,7 @@ class RenogyBaseParser:
             bit_offset = field_info.get("bit_offset")
             data_type = field_info.get("data_type", "int")
             signed = field_info.get("signed", False)
+            signed_encoding = field_info.get("signed_encoding", "twos_complement")
 
             try:
                 value = parse_value(
@@ -133,6 +145,7 @@ class RenogyBaseParser:
                     bit_offset=bit_offset,
                     data_type=data_type,
                     signed=signed,
+                    signed_encoding=signed_encoding,
                 )
 
                 value_map = field_info.get("map")
