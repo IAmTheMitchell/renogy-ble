@@ -41,6 +41,14 @@ def test_parse_value_signed_byte():
     assert parse_value(data, 1, 1, "big", signed=True) == 127
 
 
+def test_parse_value_signed_byte_auto_encoding():
+    """Test auto handling for alternate signed byte encodings."""
+    data = bytes([0x81, 0xFF])
+
+    assert parse_value(data, 0, 1, "big", signed=True, signed_encoding="auto") == -1
+    assert parse_value(data, 1, 1, "big", signed=True, signed_encoding="auto") == -1
+
+
 def test_parse_value_insufficient_data():
     """Test parsing a value with insufficient data."""
     data = bytes([0x01, 0x02, 0x03])
