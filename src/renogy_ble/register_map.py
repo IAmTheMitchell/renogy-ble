@@ -405,11 +405,13 @@ REGISTER_MAP: RegisterMap = {
             "offset": 3,
         },
         # Maximum charging current (register 57345 / 0xE001)
+        # Stored as centiamps (100x), so 4000 = 40A
         "max_charging_current": {
             "register": 57345,
             "length": 2,
             "byte_order": "big",
             "offset": 3,
+            "scale": 0.01,  # Convert centiamps to amps
         },
         # Parameter Settings Section (all read from register 57347 / 0xE003)
         # Command reads 18 words starting at 0xE003, offsets are within the response
