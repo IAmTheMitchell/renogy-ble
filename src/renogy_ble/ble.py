@@ -574,11 +574,13 @@ class RenogyBleClient:
                             register,
                             exception_code,
                         )
+                        error_message = (
+                            "Modbus exception code "
+                            f"{exception_code} for register {register}"
+                        )
                         return RenogyBleWriteResult(
                             False,
-                            RuntimeError(
-                                f"Modbus exception code {exception_code} for register {register}"
-                            ),
+                            RuntimeError(error_message),
                         )
 
                     if len(notification_data) >= expected_len:
