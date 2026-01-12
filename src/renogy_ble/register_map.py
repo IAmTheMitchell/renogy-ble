@@ -404,6 +404,13 @@ REGISTER_MAP: RegisterMap = {
             "map": {0: "disconnected", 1: "connected"},
             "offset": 3,
         },
+        # Maximum charging current (register 57345 / 0xE001)
+        "max_charging_current": {
+            "register": 57345,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 3,
+        },
         # Parameter Settings Section (all read from register 57347 / 0xE003)
         # Command reads 18 words starting at 0xE003, offsets are within the response
         "system_voltage": {

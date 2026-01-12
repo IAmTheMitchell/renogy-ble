@@ -48,6 +48,7 @@ COMMANDS = {
         "device_id": (3, 26, 1),
         "dynamic_data": (3, 256, 32),  # 0x0100-0x011F (32 words)
         "status": (3, 288, 8),  # 0x0120-0x0127 (8 words)
+        "current_limit": (3, 57345, 1),  # 0xE001 (1 word) - max charging current
         "parameters": (3, 57347, 18),  # 0xE003-0xE014 (18 words)
     },
 }
