@@ -37,7 +37,7 @@ def test_create_modbus_read_request_appends_crc():
 
 def test_create_modbus_write_request_appends_crc():
     frame = create_modbus_write_request(DEFAULT_DEVICE_ID, 6, 0x010A, 0x0001)
-    assert frame[:6] == bytes([DEFAULT_DEVICE_ID, 6, 0x01, 0x00, 0x00, 0x01])
+    assert frame[:6] == bytes([DEFAULT_DEVICE_ID, 6, 0x01, 0x0A, 0x00, 0x01])
     crc_low, crc_high = modbus_crc(frame[:6])
     assert frame[6:] == bytes([crc_low, crc_high])
 
