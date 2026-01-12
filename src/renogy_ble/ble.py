@@ -538,10 +538,12 @@ class RenogyBleClient:
             await client.write_gatt_char(self._write_char_uuid, modbus_request)
 
             expected_len = 8
+            exception_len = 5
+            exception_code_mask = function_code | 0x80
             start_time = asyncio.get_running_loop().time()
 
             try:
-                while len(notification_data) < expected_len:
+                while True:
                     remaining = self._max_notification_wait_time - (
                         asyncio.get_running_loop().time() - start_time
                     )
@@ -549,6 +551,38 @@ class RenogyBleClient:
                         raise asyncio.TimeoutError()
                     await asyncio.wait_for(notification_event.wait(), remaining)
                     notification_event.clear()
+
+                    if (
+                        len(notification_data) >= exception_len
+                        and notification_data[0] == self._device_id
+                        and notification_data[1] == exception_code_mask
+                    ):
+                        exception_response = bytes(notification_data[:exception_len])
+                        crc_low, crc_high = modbus_crc(exception_response[:3])
+                        if exception_response[3:5] != bytes([crc_low, crc_high]):
+                            logger.info(
+                                "Write exception CRC mismatch for register %s",
+                                register,
+                            )
+                            return RenogyBleWriteResult(
+                                False, RuntimeError("Exception CRC mismatch")
+                            )
+
+                        exception_code = exception_response[2]
+                        logger.info(
+                            "Write exception response for register %s: code %s",
+                            register,
+                            exception_code,
+                        )
+                        return RenogyBleWriteResult(
+                            False,
+                            RuntimeError(
+                                f"Modbus exception code {exception_code} for register {register}"
+                            ),
+                        )
+
+                    if len(notification_data) >= expected_len:
+                        break
             except asyncio.TimeoutError:
                 logger.info(
                     "Timeout – only %s / %s bytes received for write register %s",
