@@ -230,6 +230,23 @@ REGISTER_MAP: RegisterMap = {
             "scale": 0.01,
             "offset": 7,
         },
+        # Temperature data (same offsets as controller)
+        "controller_temperature": {
+            "register": 256,
+            "length": 1,
+            "byte_order": "big",
+            "offset": 9,
+            "signed": True,
+            "signed_encoding": "sign_magnitude",
+        },
+        "battery_temperature": {
+            "register": 256,
+            "length": 1,
+            "byte_order": "big",
+            "offset": 10,
+            "signed": True,
+            "signed_encoding": "sign_magnitude",
+        },
         # Alternator/Generator data (0x0104-0x0106)
         "alternator_voltage": {
             "register": 256,
