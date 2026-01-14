@@ -359,3 +359,23 @@ def test_unsupported_model(integration_parser):
     # Check that a warning was logged
     log_output = log_capture.getvalue()
     assert "Unsupported model" in log_output
+
+
+def test_dcc_reverse_charging_voltage_parsing():
+    """Test parsing DCC reverse charging voltage from its dedicated register."""
+    parser = RenogyBaseParser()
+    data = bytes([0xFF, 0x03, 0x02, 0x00, 0x96, 0x00, 0x00])  # 150 -> 15.0V
+
+    result = parser.parse(data, "dcc", 57376)
+
+    assert result["reverse_charging_voltage"] == 15.0
+
+
+def test_dcc_solar_cutoff_current_parsing():
+    """Test parsing DCC solar cutoff current from its dedicated register."""
+    parser = RenogyBaseParser()
+    data = bytes([0xFF, 0x03, 0x02, 0x00, 0x07, 0x00, 0x00])  # 7A
+
+    result = parser.parse(data, "dcc", 57400)
+
+    assert result["solar_cutoff_current"] == 7

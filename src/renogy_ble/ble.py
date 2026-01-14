@@ -50,6 +50,8 @@ COMMANDS = {
         "status": (3, 288, 8),  # 0x0120-0x0127 (8 words)
         "current_limit": (3, 57345, 1),  # 0xE001 (1 word) - max charging current
         "parameters": (3, 57347, 18),  # 0xE003-0xE014 (18 words)
+        "reverse_charging_voltage": (3, 57376, 1),  # 0xE020 (1 word)
+        "solar_cutoff_current": (3, 57400, 1),  # 0xE038 (1 word)
     },
 }
 

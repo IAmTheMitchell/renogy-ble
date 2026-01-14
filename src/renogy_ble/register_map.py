@@ -545,5 +545,19 @@ REGISTER_MAP: RegisterMap = {
             "byte_order": "big",
             "offset": 37,
         },
+        # Additional parameters at different registers
+        "reverse_charging_voltage": {
+            "register": 57376,  # 0xE020
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 3,
+        },
+        "solar_cutoff_current": {
+            "register": 57400,  # 0xE038
+            "length": 2,
+            "byte_order": "big",
+            "offset": 3,
+        },
     },
 }
