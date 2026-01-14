@@ -1,4 +1,4 @@
-name: Beta Release
+name: Prerelease
 
 on:
   pull_request:
@@ -10,6 +10,16 @@ on:
         description: Release Please branch to build from
         required: false
         default: release-please--branches--main
+      semantic_version:
+        description: Optional semantic version to publish (x.x.x)
+        required: false
+      prerelease:
+        description: Prerelease type (defaults to beta)
+        required: false
+        type: choice
+        options:
+          - beta
+          - alpha
       beta_iteration:
         description: Optional beta iteration identifier (defaults to run number)
         required: false
@@ -41,6 +51,8 @@ jobs:
         id: version
         env:
           BETA_ITERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.beta_iteration || '' }}
+          SEMANTIC_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.semantic_version || '' }}
+          PRERELEASE_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || '' }}
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -55,9 +67,22 @@ jobs:
           if not match:
             sys.exit("Version not found in pyproject.toml")
 
-          base_version = match.group("version")
+          semver_input = os.environ.get("SEMANTIC_VERSION", "").strip()
+          prerelease_input = os.environ.get("PRERELEASE_ID", "").strip().lower()
+          prerelease_map = {"alpha": "a", "beta": "b", "a": "a", "b": "b"}
+          if prerelease_input and prerelease_input not in prerelease_map:
+            sys.exit("Invalid prerelease identifier. Use 'alpha' or 'beta'.")
+
+          if semver_input:
+            if not re.fullmatch(r"\d+\.\d+\.\d+", semver_input):
+              sys.exit("Invalid semantic version. Use x.x.x format.")
+            base_version = semver_input
+          else:
+            base_version = match.group("version")
+
+          prerelease = prerelease_map.get(prerelease_input, "b")
           iteration = os.environ.get("BETA_ITERATION") or os.environ.get("GITHUB_RUN_NUMBER")
-          beta_version = f"{base_version}b{iteration}"
+          beta_version = f"{base_version}{prerelease}{iteration}"
 
           new_content = re.sub(
             r'^version\s*=\s*".*"',
