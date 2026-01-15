@@ -35,12 +35,23 @@ DEFAULT_DEVICE_ID = 0xFF
 DEFAULT_DEVICE_TYPE = "controller"
 
 # Modbus commands for requesting data
+# Format: (function_code, start_register, word_count)
 COMMANDS = {
     DEFAULT_DEVICE_TYPE: {
         "device_info": (3, 12, 8),
         "device_id": (3, 26, 1),
         "battery": (3, 57348, 1),
         "pv": (3, 256, 34),
+    },
+    "dcc": {
+        "device_info": (3, 12, 8),
+        "device_id": (3, 26, 1),
+        "dynamic_data": (3, 256, 32),  # 0x0100-0x011F (32 words)
+        "status": (3, 288, 8),  # 0x0120-0x0127 (8 words)
+        "current_limit": (3, 57345, 1),  # 0xE001 (1 word) - max charging current
+        "parameters": (3, 57347, 18),  # 0xE003-0xE014 (18 words)
+        "reverse_charging_voltage": (3, 57376, 1),  # 0xE020 (1 word)
+        "solar_cutoff_current": (3, 57400, 1),  # 0xE038 (1 word)
     },
 }
 
@@ -80,6 +91,38 @@ def create_modbus_read_request(
     crc_low, crc_high = modbus_crc(frame)
     frame.extend([crc_low, crc_high])
     logger.debug("create_request_payload: %s (%s)", register, list(frame))
+    return frame
+
+
+def create_modbus_write_request(device_id: int, register: int, value: int) -> bytearray:
+    """Build a Modbus function 06 (write single register) frame.
+
+    Args:
+        device_id: Modbus device ID (1-247, or 0xFF for universal)
+        register: Register address to write
+        value: 16-bit value to write
+
+    Returns:
+        Complete Modbus frame with CRC
+    """
+    frame = bytearray(
+        [
+            device_id,
+            0x06,  # Function code 06 = write single register
+            (register >> 8) & 0xFF,
+            register & 0xFF,
+            (value >> 8) & 0xFF,
+            value & 0xFF,
+        ]
+    )
+    crc_low, crc_high = modbus_crc(frame)
+    frame.extend([crc_low, crc_high])
+    logger.debug(
+        "create_write_request: register=0x%04X value=%s frame=%s",
+        register,
+        value,
+        list(frame),
+    )
     return frame
 
 
@@ -444,3 +487,133 @@ class RenogyBleClient:
         if "scanner" in signature.parameters:
             return {"scanner": self._scanner}
         return {}
+
+    async def write_register(
+        self, device: RenogyBLEDevice, register: int, value: int
+    ) -> bool:
+        """Write a single register value to the device.
+
+        Args:
+            device: The target device
+            register: Register address to write (e.g., 0xE004 for battery type)
+            value: 16-bit value to write
+
+        Returns:
+            True if write was successful, False otherwise
+        """
+        connection_kwargs = self._connection_kwargs()
+
+        try:
+            client = await establish_connection(
+                BleakClientWithServiceCache,
+                device.ble_device,
+                device.name or device.address,
+                max_attempts=self._max_attempts,
+                **connection_kwargs,
+            )
+        except (BleakError, asyncio.TimeoutError) as connection_error:
+            logger.error(
+                "Failed to connect for write to device %s: %s",
+                device.name,
+                str(connection_error),
+            )
+            return False
+
+        try:
+            logger.debug("Connected to device %s for write", device.name)
+            notification_event = asyncio.Event()
+            notification_data = bytearray()
+
+            def notification_handler(_sender, data):
+                notification_data.extend(data)
+                notification_event.set()
+
+            await client.start_notify(self._read_char_uuid, notification_handler)
+
+            # Build and send the write request
+            modbus_request = create_modbus_write_request(
+                self._device_id, register, value
+            )
+            logger.debug(
+                "Sending write command to register 0x%04X: %s",
+                register,
+                list(modbus_request),
+            )
+            await client.write_gatt_char(self._write_char_uuid, modbus_request)
+
+            # Wait for response (function 06 echoes the request on success)
+            expected_len = 8  # Same length as request
+            try:
+                await asyncio.wait_for(
+                    notification_event.wait(), self._max_notification_wait_time
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Timeout waiting for write response from device %s",
+                    device.name,
+                )
+                await client.stop_notify(self._read_char_uuid)
+                return False
+
+            await client.stop_notify(self._read_char_uuid)
+
+            # Verify response
+            if len(notification_data) < expected_len:
+                logger.error(
+                    "Write response too short: got %s bytes, expected %s",
+                    len(notification_data),
+                    expected_len,
+                )
+                return False
+
+            # Check for error response (function code with high bit set)
+            if notification_data[1] & 0x80:
+                error_code = notification_data[2] if len(notification_data) > 2 else 0
+                logger.error(
+                    "Modbus write error: function code 0x%02X, error code %s",
+                    notification_data[1],
+                    error_code,
+                )
+                return False
+
+            # Verify the echoed register and value match
+            resp_register = (notification_data[2] << 8) | notification_data[3]
+            resp_value = (notification_data[4] << 8) | notification_data[5]
+
+            if resp_register != register or resp_value != value:
+                logger.error(
+                    "Write response mismatch: expected reg=0x%04X val=%s, "
+                    "got reg=0x%04X val=%s",
+                    register,
+                    value,
+                    resp_register,
+                    resp_value,
+                )
+                return False
+
+            logger.info(
+                "Successfully wrote value %s to register 0x%04X on device %s",
+                value,
+                register,
+                device.name,
+            )
+            return True
+
+        except BleakError as exc:
+            logger.error(
+                "BLE error during write to device %s: %s", device.name, str(exc)
+            )
+            return False
+        except Exception as exc:
+            logger.error("Error writing to device %s: %s", device.name, str(exc))
+            return False
+        finally:
+            if client.is_connected:
+                try:
+                    await client.disconnect()
+                except Exception as exc:
+                    logger.debug(
+                        "Error disconnecting from device %s: %s",
+                        device.name,
+                        str(exc),
+                    )

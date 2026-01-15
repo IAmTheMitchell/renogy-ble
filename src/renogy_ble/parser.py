@@ -208,3 +208,37 @@ class ControllerParser(RenogyBaseParser):
 
         # Use the base parser's parse method with the device type
         return self.parse(data, self.type, register)
+
+
+class DCCParser(RenogyBaseParser):
+    """
+    Parser specifically for Renogy DC-DC chargers.
+
+    This class extends the RenogyBaseParser to parse data from DCC devices
+    like DCC30S, DCC50S, RBC20D1U, RBC40D1U, etc.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the DCC parser."""
+        super().__init__()
+        self.type = "dcc"
+
+    def parse_data(
+        self, data: bytes, register: int | None = None
+    ) -> dict[str, int | float | str]:
+        """
+        Parse raw data from a DCC device.
+
+        Args:
+            data (bytes): The raw byte data received from the device
+            register (int, optional): The register number to parse. If not provided,
+                                      returns an empty dictionary.
+        Returns:
+            dict: A dictionary containing the parsed values specific to the device type
+        """
+        if register is None:
+            logger.warning("Register parameter is required but not provided")
+            return {}
+
+        # Use the base parser's parse method with the device type
+        return self.parse(data, self.type, register)

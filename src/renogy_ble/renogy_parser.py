@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from renogy_ble.parser import ControllerParser
+from renogy_ble.parser import ControllerParser, DCCParser
 from renogy_ble.register_map import REGISTER_MAP
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,10 @@ class RenogyParser:
 
         if device_type == "controller":
             parser = ControllerParser()
+            return parser.parse_data(raw_data, register)
+
+        if device_type == "dcc":
+            parser = DCCParser()
             return parser.parse_data(raw_data, register)
 
         logger.warning(
