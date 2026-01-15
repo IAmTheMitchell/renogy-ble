@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.1.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.2...v1.1.0) (2026-01-15)
+
+
+### Features
+
+* add DC-DC charger (DCC) support ([#24](https://github.com/IAmTheMitchell/renogy-ble/issues/24)) ([5155299](https://github.com/IAmTheMitchell/renogy-ble/commit/51552997b2f359bd2218775864b744c4f1e7c1ed))
+
 ## [1.0.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.1...v1.0.2) (2026-01-08)
 
 
