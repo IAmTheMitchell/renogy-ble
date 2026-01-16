@@ -98,15 +98,15 @@ def create_modbus_read_request(
 
 
 def create_modbus_write_request(
-    device_id: int, function_code: int, register: int, value: int
+    device_id: int, register: int, value: int, function_code: int = 0x06
 ) -> bytearray:
     """Build a Modbus write single register frame.
 
     Args:
         device_id: Modbus device ID (1-247, or 0xFF for universal).
-        function_code: Modbus function code (typically 0x06 for write single register).
         register: Register address to write.
         value: 16-bit value to write.
+        function_code: Modbus function code (typically 0x06 for write single register).
 
     Returns:
         Complete Modbus frame with CRC.
@@ -529,7 +529,7 @@ class RenogyBleClient:
             notification_started = True
 
             modbus_request = create_modbus_write_request(
-                self._device_id, function_code, register, value
+                self._device_id, register, value, function_code=function_code
             )
             logger.debug(
                 "Sending write register command: %s",
@@ -701,7 +701,7 @@ class RenogyBleClient:
 
             # Build and send the write request
             modbus_request = create_modbus_write_request(
-                self._device_id, 0x06, register, value
+                self._device_id, register, value
             )
             logger.debug(
                 "Sending write command to register 0x%04X: %s",
