@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.2.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.1.0...v1.2.0) (2026-01-24)
+
+
+### Features
+
+* turn controller load on/off ([#20](https://github.com/IAmTheMitchell/renogy-ble/issues/20)) ([7ce7666](https://github.com/IAmTheMitchell/renogy-ble/commit/7ce76663de58c077952ac71392284068f4b81fa9))
+
 ## [1.1.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.0.2...v1.1.0) (2026-01-15)
 
 
