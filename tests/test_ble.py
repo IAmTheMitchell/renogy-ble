@@ -1,11 +1,14 @@
 """Tests for BLE helpers and device tracking."""
 
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
     UNAVAILABLE_RETRY_INTERVAL,
+    BleakError,
+    RenogyBleClient,
     RenogyBLEDevice,
     clean_device_name,
     create_modbus_read_request,
@@ -82,3 +85,33 @@ def test_should_retry_connection_interval():
         minutes=UNAVAILABLE_RETRY_INTERVAL + 1
     )
     assert device.should_retry_connection is True
+
+
+def test_read_device_disconnects_even_if_not_connected(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = False
+            self.disconnect_called = False
+
+        async def start_notify(self, *_args, **_kwargs):
+            raise BleakError("not connected")
+
+        async def disconnect(self):
+            self.disconnect_called = True
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(commands={"test_device": {"status": (3, 0x0000, 1)}})
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="test_device")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert dummy_client.disconnect_called is True

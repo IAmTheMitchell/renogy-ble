@@ -373,6 +373,7 @@ class RenogyBleClient:
         any_command_succeeded = False
         error: Exception | None = None
 
+        client = None
         try:
             client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -473,7 +474,7 @@ class RenogyBleClient:
             logger.error("Error reading data from device %s: %s", device.name, str(exc))
             error = exc
         finally:
-            if client.is_connected:
+            if client is not None:
                 try:
                     await client.disconnect()
                     logger.debug("Disconnected from device %s", device.name)
@@ -500,6 +501,7 @@ class RenogyBleClient:
         """Write a single register value and return success."""
         connection_kwargs = self._connection_kwargs()
 
+        client = None
         try:
             client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -634,7 +636,7 @@ class RenogyBleClient:
                         device.name,
                         str(exc),
                     )
-            if client.is_connected:
+            if client is not None:
                 try:
                     await client.disconnect()
                     logger.debug("Disconnected from device %s", device.name)
@@ -672,6 +674,7 @@ class RenogyBleClient:
         """
         connection_kwargs = self._connection_kwargs()
 
+        client = None
         try:
             client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -777,7 +780,7 @@ class RenogyBleClient:
             logger.error("Error writing to device %s: %s", device.name, str(exc))
             return False
         finally:
-            if client.is_connected:
+            if client is not None:
                 try:
                     await client.disconnect()
                 except Exception as exc:
