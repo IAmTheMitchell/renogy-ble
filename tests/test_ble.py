@@ -2,8 +2,8 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 from typing import Callable
+from unittest.mock import MagicMock
 
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
