@@ -474,7 +474,7 @@ class RenogyBleClient:
             logger.error("Error reading data from device %s: %s", device.name, str(exc))
             error = exc
         finally:
-            if client is not None:
+            if client is not None and client.is_connected:
                 try:
                     await client.disconnect()
                     logger.debug("Disconnected from device %s", device.name)
@@ -636,7 +636,7 @@ class RenogyBleClient:
                         device.name,
                         str(exc),
                     )
-            if client is not None:
+            if client is not None and client.is_connected:
                 try:
                     await client.disconnect()
                     logger.debug("Disconnected from device %s", device.name)
@@ -780,7 +780,7 @@ class RenogyBleClient:
             logger.error("Error writing to device %s: %s", device.name, str(exc))
             return False
         finally:
-            if client is not None:
+            if client is not None and client.is_connected:
                 try:
                     await client.disconnect()
                 except Exception as exc:
