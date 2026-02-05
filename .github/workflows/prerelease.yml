@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_branch:
-        description: Release Please branch to build from
+        description: Branch to build from
         required: false
         default: release-please--branches--main
       semantic_version:
@@ -21,7 +21,7 @@ on:
           - beta
           - alpha
       beta_iteration:
-        description: Optional beta iteration identifier (defaults to run number)
+        description: Optional alpha/beta iteration identifier (defaults to run number)
         required: false
 
 permissions:
