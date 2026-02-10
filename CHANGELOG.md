@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.2.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.2.0...v1.2.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* ensure proper client disconnection in RenogyBleClient methods ([#33](https://github.com/IAmTheMitchell/renogy-ble/issues/33)) ([4513b56](https://github.com/IAmTheMitchell/renogy-ble/commit/4513b56070abf8b920a17b7f827a451ab5b61a8d))
+
 ## [1.2.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.1.0...v1.2.0) (2026-01-24)
 
 
