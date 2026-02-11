@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## [1.2.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.2.1...v1.2.2) (2026-02-11)
+
+
+### Documentation
+
+* add contributing guidelines for the project ([829b08d](https://github.com/IAmTheMitchell/renogy-ble/commit/829b08db221cf6a6b97a10168af106025a993bb4))
+* add contributing guidelines for the project ([647399d](https://github.com/IAmTheMitchell/renogy-ble/commit/647399de628d5b2f6e8b3a58775779e829b60d84))
+* move CONTRIBUTING.md ([c7ea98c](https://github.com/IAmTheMitchell/renogy-ble/commit/c7ea98c9dc72754f1da74ea95ebb9cef83fb0dd4))
+
 ## [1.2.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.2.0...v1.2.1) (2026-02-10)
 
 
