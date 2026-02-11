@@ -58,11 +58,19 @@ def test_energy_integration_tracks_each_device_separately() -> None:
     """Validate energy integration state is isolated per device address."""
     client = ShuntBleClient()
 
-    assert client._integrate_energy(device_address="A", power_w=100.0, now_ts=1000.0) == 0
-    assert client._integrate_energy(device_address="B", power_w=200.0, now_ts=1100.0) == 0
+    assert (
+        client._integrate_energy(device_address="A", power_w=100.0, now_ts=1000.0) == 0
+    )
+    assert (
+        client._integrate_energy(device_address="B", power_w=200.0, now_ts=1100.0) == 0
+    )
 
-    a_energy = client._integrate_energy(device_address="A", power_w=100.0, now_ts=4600.0)
-    b_energy = client._integrate_energy(device_address="B", power_w=200.0, now_ts=2900.0)
+    a_energy = client._integrate_energy(
+        device_address="A", power_w=100.0, now_ts=4600.0
+    )
+    b_energy = client._integrate_energy(
+        device_address="B", power_w=200.0, now_ts=2900.0
+    )
 
     assert round(a_energy, 3) == 0.1
     assert round(b_energy, 3) == 0.1
@@ -72,9 +80,13 @@ def test_energy_integration_ignores_invalid_time_delta() -> None:
     """Validate integration does not accumulate for stale or non-positive deltas."""
     client = ShuntBleClient()
 
-    assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=1000.0) == 0
+    assert (
+        client._integrate_energy(device_address="A", power_w=50.0, now_ts=1000.0) == 0
+    )
     assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=900.0) == 0
-    assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=50000.0) == 0
+    assert (
+        client._integrate_energy(device_address="A", power_w=50.0, now_ts=50000.0) == 0
+    )
 
 
 def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:FF"):
