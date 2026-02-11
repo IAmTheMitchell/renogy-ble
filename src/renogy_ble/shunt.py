@@ -124,6 +124,7 @@ class ShuntBleClient:
         event = asyncio.Event()
         error: Exception | None = None
         success = False
+        device.parsed_data.clear()
 
         try:
             client = await establish_connection(

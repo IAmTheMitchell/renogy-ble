@@ -1,5 +1,10 @@
 """Tests for Smart Shunt payload parsing."""
 
+import asyncio
+from unittest.mock import MagicMock
+
+from renogy_ble import shunt as shunt_module
+from renogy_ble.ble import RenogyBLEDevice
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
     KEY_SHUNT_ENERGY,
@@ -70,3 +75,34 @@ def test_energy_integration_ignores_invalid_time_delta() -> None:
     assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=1000.0) == 0
     assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=900.0) == 0
     assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=50000.0) == 0
+
+
+def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:FF"):
+    """Create a minimal BLEDevice-like object for tests."""
+    device = MagicMock()
+    device.name = name
+    device.address = address
+    device.rssi = -60
+    return device
+
+
+def test_read_device_clears_stale_data_on_connection_failure(monkeypatch) -> None:
+    """Validate failed reads do not return stale parsed data."""
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        raise asyncio.TimeoutError("connect timeout")
+
+    monkeypatch.setattr(
+        shunt_module, "establish_connection", _fake_establish_connection
+    )
+
+    client = ShuntBleClient()
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="SHUNT300")
+    device.parsed_data = {"shunt_voltage": 13.2, "raw_payload": "stale"}
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert isinstance(result.error, asyncio.TimeoutError)
+    assert result.parsed_data == {}
+    assert device.parsed_data == {}
