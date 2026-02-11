@@ -1,11 +1,15 @@
 """Tests for BLE helpers and device tracking."""
 
+import asyncio
 from datetime import datetime, timedelta
+from typing import Callable
 from unittest.mock import MagicMock
 
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
     UNAVAILABLE_RETRY_INTERVAL,
+    BleakError,
+    RenogyBleClient,
     RenogyBLEDevice,
     clean_device_name,
     create_modbus_read_request,
@@ -82,3 +86,53 @@ def test_should_retry_connection_interval():
         minutes=UNAVAILABLE_RETRY_INTERVAL + 1
     )
     assert device.should_retry_connection is True
+
+
+def test_read_device_skips_disconnect_when_not_connected(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = False
+            self.disconnect_called = False
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, *_args, **_kwargs):
+            # Provide enough bytes to satisfy expected length (7 bytes).
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+            self._notify_handler(None, b"\x01\x03\x02\x00\x00\x00\x00")
+
+        async def stop_notify(self, *_args, **_kwargs):
+            return None
+
+        async def disconnect(self):
+            self.disconnect_called = True
+            raise BleakError("disconnect called unexpectedly")
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(commands={"test_device": {"status": (3, 0x0000, 1)}})
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="test_device")
+
+    def _update_parsed_data(
+        _raw_data: bytes, register: int, cmd_name: str = "unknown"
+    ) -> bool:
+        _ = register, cmd_name
+        return True
+
+    monkeypatch.setattr(device, "update_parsed_data", _update_parsed_data)
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.error is None
+    assert dummy_client.disconnect_called is False
