@@ -99,8 +99,24 @@ class ShuntBleClient:
         self._expected_length = expected_length
         self._max_notification_wait_time = max_notification_wait_time
         self._max_attempts = max_attempts
-        self._last_energy_ts: float | None = None
-        self._net_wh: float = 0.0
+        self._energy_state: dict[str, tuple[float, float]] = {}
+
+    def _integrate_energy(
+        self, *, device_address: str, power_w: float | int | None, now_ts: float
+    ) -> float:
+        """Integrate power over time and return net energy in kWh for one device."""
+        state = self._energy_state.get(device_address)
+        if state is None:
+            self._energy_state[device_address] = (now_ts, 0.0)
+            return 0.0
+
+        last_ts, net_wh = state
+        dt_hours = (now_ts - last_ts) / 3600
+        if 0 < dt_hours < 10 and power_w is not None:
+            net_wh += float(power_w) * dt_hours
+
+        self._energy_state[device_address] = (now_ts, net_wh)
+        return net_wh / 1000
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect, wait for one notification payload, parse, and return result."""
@@ -146,14 +162,12 @@ class ShuntBleClient:
 
             if parsed:
                 now = loop.time()
-                if self._last_energy_ts is None:
-                    self._last_energy_ts = now
-                else:
-                    dt_hours = (now - self._last_energy_ts) / 3600
-                    if 0 < dt_hours < 10 and parsed.get(KEY_SHUNT_POWER) is not None:
-                        self._net_wh += float(parsed[KEY_SHUNT_POWER]) * dt_hours
-                    self._last_energy_ts = now
-                parsed[KEY_SHUNT_ENERGY] = round(self._net_wh / 1000, 3)
+                net_kwh = self._integrate_energy(
+                    device_address=device.address,
+                    power_w=parsed.get(KEY_SHUNT_POWER),
+                    now_ts=now,
+                )
+                parsed[KEY_SHUNT_ENERGY] = round(net_kwh, 3)
 
                 parsed["raw_payload"] = raw_payload.hex()
                 parsed["raw_words"] = [
