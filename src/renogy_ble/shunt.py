@@ -62,7 +62,7 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
 
     if voltage is None or current is None or power is None:
         return None
-    if voltage < 0 or voltage > 80:
+    if voltage < 6 or voltage > 80:
         return None
     if abs(current) > 500:
         return None
@@ -82,6 +82,23 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
         "starter_battery_voltage": starter_voltage,
         "battery_temperature": battery_temp,
     }
+
+
+def _find_valid_payload_window(
+    payload: bytes, expected_length: int
+) -> tuple[bytes, dict[str, Any]] | None:
+    """Return the first valid payload window and parsed data from a byte stream."""
+    if len(payload) < expected_length:
+        return None
+
+    max_offset = len(payload) - expected_length
+    for offset in range(max_offset + 1):
+        window = payload[offset : offset + expected_length]
+        parsed = parse_shunt_payload(window)
+        if parsed is not None:
+            return window, parsed
+
+    return None
 
 
 class ShuntBleClient:
@@ -124,6 +141,8 @@ class ShuntBleClient:
         event = asyncio.Event()
         error: Exception | None = None
         success = False
+        parsed_result: dict[str, Any] | None = None
+        raw_payload: bytes | None = None
         device.parsed_data.clear()
 
         try:
@@ -149,38 +168,43 @@ class ShuntBleClient:
             loop = asyncio.get_running_loop()
             start = loop.time()
 
-            while len(payload) < self._expected_length:
+            while parsed_result is None:
                 remaining = self._max_notification_wait_time - (loop.time() - start)
                 if remaining <= 0:
-                    raise asyncio.TimeoutError(
-                        f"No shunt payload after {self._max_notification_wait_time}s"
-                    )
+                    break
                 await asyncio.wait_for(event.wait(), remaining)
                 event.clear()
 
-            raw_payload = bytes(payload[: self._expected_length])
-            parsed = parse_shunt_payload(raw_payload)
+                maybe_parsed = _find_valid_payload_window(
+                    bytes(payload), self._expected_length
+                )
+                if maybe_parsed is not None:
+                    raw_payload, parsed_result = maybe_parsed
 
-            if parsed:
+            if parsed_result and raw_payload:
                 now = loop.time()
                 net_kwh = self._integrate_energy(
                     device_address=device.address,
-                    power_w=parsed.get(KEY_SHUNT_POWER),
+                    power_w=parsed_result.get(KEY_SHUNT_POWER),
                     now_ts=now,
                 )
-                parsed[KEY_SHUNT_ENERGY] = round(net_kwh, 3)
+                parsed_result[KEY_SHUNT_ENERGY] = round(net_kwh, 3)
 
-                parsed["raw_payload"] = raw_payload.hex()
-                parsed["raw_words"] = [
+                parsed_result["raw_payload"] = raw_payload.hex()
+                parsed_result["raw_words"] = [
                     int.from_bytes(
                         raw_payload[i * 2 : (i + 1) * 2], "big", signed=False
                     )
                     for i in range(len(raw_payload) // 2)
                 ]
-                device.parsed_data = parsed
+                device.parsed_data = parsed_result
                 success = True
             else:
-                error = RuntimeError("Empty shunt payload parsed")
+                error = RuntimeError(
+                    "Empty shunt payload parsed "
+                    f"(received {len(payload)} bytes in "
+                    f"{self._max_notification_wait_time}s)"
+                )
 
             await client.stop_notify(self._notify_char_uuid)
         except asyncio.TimeoutError as exc:
