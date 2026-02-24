@@ -1,6 +1,7 @@
 """Tests for BLE helpers and device tracking."""
 
 import asyncio
+import builtins
 from datetime import datetime, timedelta
 from typing import Callable
 from unittest.mock import MagicMock
@@ -136,3 +137,48 @@ def test_read_device_skips_disconnect_when_not_connected(monkeypatch):
     assert result.success is True
     assert result.error is None
     assert dummy_client.disconnect_called is False
+
+
+def test_read_device_delegates_shunt300_to_shunt_client(monkeypatch):
+    init_kwargs: dict[str, object] = {}
+
+    class DummyShuntClient:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+
+        async def read_device(self, device):
+            device.parsed_data = {"shunt_voltage": 13.2}
+            return MagicMock(success=True, parsed_data=device.parsed_data, error=None)
+
+    from renogy_ble import shunt as shunt_module
+
+    monkeypatch.setattr(shunt_module, "ShuntBleClient", DummyShuntClient)
+
+    client = RenogyBleClient(max_notification_wait_time=1.25, max_attempts=2)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="shunt300")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data == {"shunt_voltage": 13.2}
+    assert init_kwargs == {"max_notification_wait_time": 1.25, "max_attempts": 2}
+
+
+def test_read_device_shunt300_reports_error_when_shunt_module_missing(monkeypatch):
+    original_import = builtins.__import__
+
+    def _fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "renogy_ble.shunt":
+            raise ImportError("module not found")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="shunt300")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert isinstance(result.error, ImportError)

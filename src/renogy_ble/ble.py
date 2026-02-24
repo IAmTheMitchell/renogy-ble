@@ -361,6 +361,23 @@ class RenogyBleClient:
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect to a device, fetch data, and return parsed results."""
+        if device.device_type == "shunt300":
+            try:
+                from renogy_ble.shunt import ShuntBleClient
+            except ImportError as exc:
+                error = ValueError(
+                    "Unsupported device type: shunt300 "
+                    "(Smart Shunt client is unavailable)"
+                )
+                logger.error("%s", error)
+                return RenogyBleReadResult(False, dict(device.parsed_data), exc)
+
+            shunt_client = ShuntBleClient(
+                max_notification_wait_time=self._max_notification_wait_time,
+                max_attempts=self._max_attempts,
+            )
+            return await shunt_client.read_device(device)
+
         commands = self._commands.get(device.device_type)
         if not commands:
             error = ValueError(f"Unsupported device type: {device.device_type}")
