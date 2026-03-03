@@ -7,8 +7,10 @@ from unittest.mock import MagicMock
 
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
+    INVERTER_DEVICE_ID,
     UNAVAILABLE_RETRY_INTERVAL,
     BleakError,
+    InverterBleClient,
     RenogyBleClient,
     RenogyBLEDevice,
     clean_device_name,
@@ -136,3 +138,12 @@ def test_read_device_skips_disconnect_when_not_connected(monkeypatch):
     assert result.success is True
     assert result.error is None
     assert dummy_client.disconnect_called is False
+
+
+def test_inverter_client_uses_inverter_defaults():
+    """Ensure inverter client is preconfigured for inverter protocol defaults."""
+    client = InverterBleClient()
+
+    assert client._device_id == INVERTER_DEVICE_ID
+    assert "inverter" in client._commands
+    assert client._max_notification_wait_time == 10.0

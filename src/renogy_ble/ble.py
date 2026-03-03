@@ -37,6 +37,9 @@ DEFAULT_DEVICE_TYPE = "controller"
 # Controller register for DC load control
 LOAD_CONTROL_REGISTER = 0x010A
 
+# Inverter defaults for RIV BLE protocol.
+INVERTER_DEVICE_ID = 0x20
+
 # Modbus commands for requesting data
 # Format: (function_code, start_register, word_count)
 COMMANDS = {
@@ -55,6 +58,12 @@ COMMANDS = {
         "parameters": (3, 57347, 18),  # 0xE003-0xE014 (18 words)
         "reverse_charging_voltage": (3, 57376, 1),  # 0xE020 (1 word)
         "solar_cutoff_current": (3, 57400, 1),  # 0xE038 (1 word)
+    },
+    "inverter": {
+        "main": (3, 4000, 32),
+        "load": (3, 4408, 6),
+        "device_id": (3, 4109, 1),
+        "model": (3, 4311, 8),
     },
 }
 
@@ -789,3 +798,28 @@ class RenogyBleClient:
                         device.name,
                         str(exc),
                     )
+
+
+class InverterBleClient(RenogyBleClient):
+    """Handle BLE connection and Modbus I/O for Renogy inverter devices."""
+
+    def __init__(
+        self,
+        *,
+        scanner: Any | None = None,
+        max_attempts: int = 2,
+    ) -> None:
+        """Initialize the inverter BLE client with inverter-specific defaults."""
+        super().__init__(
+            scanner=scanner,
+            device_id=INVERTER_DEVICE_ID,
+            commands={"inverter": COMMANDS["inverter"]},
+            max_notification_wait_time=10.0,
+            max_attempts=max_attempts,
+        )
+
+    async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
+        """Read inverter data using inverter command and parser mappings."""
+        if device.device_type != "inverter":
+            device.device_type = "inverter"
+        return await super().read_device(device)

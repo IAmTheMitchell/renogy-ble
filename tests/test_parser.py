@@ -379,3 +379,42 @@ def test_dcc_solar_cutoff_current_parsing():
     result = parser.parse(data, "dcc", 57400)
 
     assert result["solar_cutoff_current"] == 7
+
+
+def test_inverter_main_register_parsing():
+    """Test parsing inverter main metrics from register 4000."""
+    parser = RenogyBaseParser()
+
+    # Build a response where selected indices have known values.
+    values = [0] * 32
+    values[2] = 2300  # 230.0V
+    values[3] = 123  # 1.23A
+    values[4] = 6000  # 60.00Hz
+    values[5] = 126  # 12.6V
+    values[6] = 255  # 25.5C
+    values[9] = 6000  # 60.00Hz
+
+    payload = bytearray([0x20, 0x03, 64])
+    for value in values:
+        payload.extend([(value >> 8) & 0xFF, value & 0xFF])
+    payload.extend([0x00, 0x00])
+
+    result = parser.parse(bytes(payload), "inverter", 4000)
+
+    assert result["inverter_ac_voltage"] == 230.0
+    assert result["inverter_ac_current"] == 1.23
+    assert result["inverter_ac_frequency"] == 60.0
+    assert result["inverter_battery_voltage"] == 12.6
+    assert result["inverter_temperature"] == 25.5
+    assert result["inverter_input_frequency"] == 60.0
+
+
+def test_inverter_model_register_parsing():
+    """Test parsing inverter model string from register 4311."""
+    parser = RenogyBaseParser()
+    model_bytes = b"RIV1220PU-126\x00\x00\x00"
+    data = bytes([0x20, 0x03, 0x10]) + model_bytes + bytes([0x00, 0x00])
+
+    result = parser.parse(data, "inverter", 4311)
+
+    assert result["inverter_model"] == "RIV1220PU-126"
