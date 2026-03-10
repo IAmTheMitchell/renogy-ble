@@ -9,11 +9,13 @@ and parsing their Modbus responses.
 ## Overview
 
 Library for communicating with Renogy devices over BLE using BT-1 and BT-2
-Bluetooth modules, plus parsing raw Modbus response data into a flat dictionary.
+Bluetooth modules for controller-style devices, plus direct BLE notifications
+from Smart Shunt 300 devices.
 
 Currently supported devices:
 
 - Renogy charge controllers (such as Rover, Wanderer, Adventurer)
+- Renogy Smart Shunt 300
 
 Future planned support:
 
@@ -93,6 +95,49 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Smart Shunt 300 Reads
+
+Smart Shunt 300 devices do not use the same Modbus command flow as Renogy
+controllers. `device_type="shunt300"` is handled by a dedicated
+notification-based client.
+
+For one-off reads, `RenogyBleClient.read_device()` will automatically delegate to
+the shunt client:
+
+```python
+import asyncio
+
+from bleak import BleakScanner
+
+from renogy_ble import RenogyBLEDevice, RenogyBleClient
+
+
+async def main() -> None:
+    devices = await BleakScanner.discover()
+    ble_device = next(
+        device for device in devices if (device.name or "").startswith("RTMShunt300")
+    )
+
+    renogy_device = RenogyBLEDevice(ble_device, device_type="shunt300")
+    result = await RenogyBleClient().read_device(renogy_device)
+    print(result.parsed_data)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+If you want the derived `shunt_energy` value to accumulate across repeated reads,
+reuse a single `ShuntBleClient` instance:
+
+```python
+from renogy_ble import RenogyBLEDevice, ShuntBleClient
+
+client = ShuntBleClient()
+device = RenogyBLEDevice(ble_device, device_type="shunt300")
+result = await client.read_device(device)
+```
+
 ### Custom Commands or Device IDs
 
 You can supply your own Modbus command set or device ID if needed.
@@ -113,6 +158,7 @@ client = RenogyBleClient(device_id=0xFF, commands=custom_commands)
 ## Features
 
 - Connects to Renogy BLE devices and reads Modbus registers
+- Connects to Renogy Smart Shunt 300 devices and parses BLE notifications
 - Builds Modbus read requests with CRC framing
 - Parses raw BLE Modbus responses from Renogy devices
 - Extracts information about battery, solar input, load output, controller status, and energy statistics
