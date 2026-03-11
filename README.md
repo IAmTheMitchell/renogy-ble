@@ -127,7 +127,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-If you want the derived `shunt_energy` value to accumulate across repeated reads,
+If you want the derived shunt energy totals to accumulate across repeated reads,
 reuse a single `ShuntBleClient` instance:
 
 ```python
