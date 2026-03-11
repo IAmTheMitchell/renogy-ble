@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [1.3.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.3.0...v1.3.1) (2026-03-11)
+
+
+### Bug Fixes
+
+* split shunt energy into charged and discharged totals ([#51](https://github.com/IAmTheMitchell/renogy-ble/issues/51)) ([448d2ff](https://github.com/IAmTheMitchell/renogy-ble/commit/448d2ffe7474931b4a16e586a8efb88aea3d1a88))
+
 ## [1.3.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.2.1...v1.3.0) (2026-03-10)
 
 
