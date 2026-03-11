@@ -3,7 +3,8 @@ name: Prerelease
 on:
   pull_request:
     branches: [main]
-    types: [opened]
+    # Run when the Release Please PR is created and whenever its branch is updated.
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       release_branch:
