@@ -38,16 +38,16 @@ wheels = [
 
 [[package]]
 name = "bleak-retry-connector"
-version = "4.5.0"
+version = "4.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bleak" },
     { name = "bluetooth-adapters", marker = "sys_platform == 'linux'" },
     { name = "dbus-fast", marker = "sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/e1/28c82e31f4f1c555c029598225b8d895bb3ccdc6c99b0974a1322f9725a9/bleak_retry_connector-4.5.0.tar.gz", hash = "sha256:5db81f8510c63cbea7b85d94bfa2b0fd9a24f0704474a49727a634488623fa17", size = 18648, upload-time = "2026-01-07T18:34:24.504Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/02/494f6a642b2aed04123a07071944681a0776259d656212133c10d0fb4b27/bleak_retry_connector-4.6.0.tar.gz", hash = "sha256:0645ca814fe9e0f2e0716ffdae5e54de25de75de6197145a1784f20f58e76844", size = 18732, upload-time = "2026-03-07T03:06:36.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/52/24ef8647f2e0dab293ec68fc58c4f0ad4e00652b631d83835cf32c06d101/bleak_retry_connector-4.5.0-py3-none-any.whl", hash = "sha256:ea63420e8f20117ef04202ea13d5215bffb736720cf865ce9a5aa556ea677afe", size = 18638, upload-time = "2026-01-07T18:34:23.119Z" },
+    { url = "https://files.pythonhosted.org/packages/23/38/091973e8b930a551b5454f9a4d6fd3fed55a73d28769e75b1d7761b46572/bleak_retry_connector-4.6.0-py3-none-any.whl", hash = "sha256:6b5ecab9dee8a67b1e64cccec47ffa8c55737b86550c366e02d11ce003d57ebd", size = 18731, upload-time = "2026-03-07T03:06:35.472Z" },
 ]
 
 [[package]]
