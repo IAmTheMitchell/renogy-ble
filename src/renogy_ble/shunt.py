@@ -24,7 +24,8 @@ KEY_SHUNT_VOLTAGE = "shunt_voltage"
 KEY_SHUNT_CURRENT = "shunt_current"
 KEY_SHUNT_POWER = "shunt_power"
 KEY_SHUNT_SOC = "shunt_soc"
-KEY_SHUNT_ENERGY = "shunt_energy"
+KEY_SHUNT_ENERGY_CHARGED_TOTAL = "energy_charged_total"
+KEY_SHUNT_ENERGY_DISCHARGED_TOTAL = "energy_discharged_total"
 
 
 def _bytes_to_number(
@@ -78,7 +79,8 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
         KEY_SHUNT_CURRENT: current,
         KEY_SHUNT_POWER: power,
         KEY_SHUNT_SOC: soc,
-        KEY_SHUNT_ENERGY: None,
+        KEY_SHUNT_ENERGY_CHARGED_TOTAL: None,
+        KEY_SHUNT_ENERGY_DISCHARGED_TOTAL: None,
         "starter_battery_voltage": starter_voltage,
         "battery_temperature": battery_temp,
     }
@@ -116,24 +118,28 @@ class ShuntBleClient:
         self._expected_length = expected_length
         self._max_notification_wait_time = max_notification_wait_time
         self._max_attempts = max_attempts
-        self._energy_state: dict[str, tuple[float, float]] = {}
+        self._energy_state: dict[str, tuple[float, float, float]] = {}
 
-    def _integrate_energy(
+    def _integrate_energy_totals(
         self, *, device_address: str, power_w: float | int | None, now_ts: float
-    ) -> float:
-        """Integrate power over time and return net energy in kWh for one device."""
+    ) -> tuple[float, float]:
+        """Integrate charging and discharging totals in kWh for one device."""
         state = self._energy_state.get(device_address)
         if state is None:
-            self._energy_state[device_address] = (now_ts, 0.0)
-            return 0.0
+            self._energy_state[device_address] = (now_ts, 0.0, 0.0)
+            return 0.0, 0.0
 
-        last_ts, net_wh = state
+        last_ts, charged_wh, discharged_wh = state
         dt_hours = (now_ts - last_ts) / 3600
         if 0 < dt_hours < 10 and power_w is not None:
-            net_wh += float(power_w) * dt_hours
+            energy_wh = float(power_w) * dt_hours
+            if energy_wh >= 0:
+                charged_wh += energy_wh
+            else:
+                discharged_wh += abs(energy_wh)
 
-        self._energy_state[device_address] = (now_ts, net_wh)
-        return net_wh / 1000
+        self._energy_state[device_address] = (now_ts, charged_wh, discharged_wh)
+        return charged_wh / 1000, discharged_wh / 1000
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect, wait for one notification payload, parse, and return result."""
@@ -183,12 +189,15 @@ class ShuntBleClient:
 
             if parsed_result and raw_payload:
                 now = loop.time()
-                net_kwh = self._integrate_energy(
+                charged_kwh, discharged_kwh = self._integrate_energy_totals(
                     device_address=device.address,
                     power_w=parsed_result.get(KEY_SHUNT_POWER),
                     now_ts=now,
                 )
-                parsed_result[KEY_SHUNT_ENERGY] = round(net_kwh, 3)
+                parsed_result[KEY_SHUNT_ENERGY_CHARGED_TOTAL] = round(charged_kwh, 3)
+                parsed_result[KEY_SHUNT_ENERGY_DISCHARGED_TOTAL] = round(
+                    discharged_kwh, 3
+                )
 
                 parsed_result["raw_payload"] = raw_payload.hex()
                 parsed_result["raw_words"] = [

@@ -7,7 +7,8 @@ from renogy_ble import shunt as shunt_module
 from renogy_ble.ble import RenogyBLEDevice
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
-    KEY_SHUNT_ENERGY,
+    KEY_SHUNT_ENERGY_CHARGED_TOTAL,
+    KEY_SHUNT_ENERGY_DISCHARGED_TOTAL,
     KEY_SHUNT_POWER,
     KEY_SHUNT_SOC,
     KEY_SHUNT_VOLTAGE,
@@ -39,7 +40,8 @@ def test_parse_shunt_payload_returns_expected_fields() -> None:
     assert data[KEY_SHUNT_CURRENT] == -5.4
     assert data[KEY_SHUNT_POWER] == round(13.2 * -5.4, 2)
     assert data[KEY_SHUNT_SOC] == 85.4
-    assert data[KEY_SHUNT_ENERGY] is None
+    assert data[KEY_SHUNT_ENERGY_CHARGED_TOTAL] is None
+    assert data[KEY_SHUNT_ENERGY_DISCHARGED_TOTAL] is None
     assert data["battery_temperature"] == 24.5
 
 
@@ -75,39 +77,43 @@ def test_find_valid_payload_window_recovers_from_misaligned_frame() -> None:
     assert parsed[KEY_SHUNT_CURRENT] == 4.3
 
 
-def test_energy_integration_tracks_each_device_separately() -> None:
-    """Validate energy integration state is isolated per device address."""
+def test_energy_integration_tracks_totals_for_each_device_separately() -> None:
+    """Validate energy totals are isolated per device address."""
     client = ShuntBleClient()
 
-    assert (
-        client._integrate_energy(device_address="A", power_w=100.0, now_ts=1000.0) == 0
-    )
-    assert (
-        client._integrate_energy(device_address="B", power_w=200.0, now_ts=1100.0) == 0
-    )
+    assert client._integrate_energy_totals(
+        device_address="A", power_w=100.0, now_ts=1000.0
+    ) == (0, 0)
+    assert client._integrate_energy_totals(
+        device_address="B", power_w=200.0, now_ts=1100.0
+    ) == (0, 0)
 
-    a_energy = client._integrate_energy(
+    a_charged, a_discharged = client._integrate_energy_totals(
         device_address="A", power_w=100.0, now_ts=4600.0
     )
-    b_energy = client._integrate_energy(
-        device_address="B", power_w=200.0, now_ts=2900.0
+    b_charged, b_discharged = client._integrate_energy_totals(
+        device_address="B", power_w=-200.0, now_ts=2900.0
     )
 
-    assert round(a_energy, 3) == 0.1
-    assert round(b_energy, 3) == 0.1
+    assert round(a_charged, 3) == 0.1
+    assert round(a_discharged, 3) == 0
+    assert round(b_charged, 3) == 0
+    assert round(b_discharged, 3) == 0.1
 
 
 def test_energy_integration_ignores_invalid_time_delta() -> None:
-    """Validate integration does not accumulate for stale or non-positive deltas."""
+    """Validate energy totals do not accumulate for stale or non-positive deltas."""
     client = ShuntBleClient()
 
-    assert (
-        client._integrate_energy(device_address="A", power_w=50.0, now_ts=1000.0) == 0
-    )
-    assert client._integrate_energy(device_address="A", power_w=50.0, now_ts=900.0) == 0
-    assert (
-        client._integrate_energy(device_address="A", power_w=50.0, now_ts=50000.0) == 0
-    )
+    assert client._integrate_energy_totals(
+        device_address="A", power_w=50.0, now_ts=1000.0
+    ) == (0, 0)
+    assert client._integrate_energy_totals(
+        device_address="A", power_w=50.0, now_ts=900.0
+    ) == (0, 0)
+    assert client._integrate_energy_totals(
+        device_address="A", power_w=50.0, now_ts=50000.0
+    ) == (0, 0)
 
 
 def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:FF"):

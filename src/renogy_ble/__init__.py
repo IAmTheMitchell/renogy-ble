@@ -27,7 +27,8 @@ from renogy_ble.ble import (
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
-    KEY_SHUNT_ENERGY,
+    KEY_SHUNT_ENERGY_CHARGED_TOTAL,
+    KEY_SHUNT_ENERGY_DISCHARGED_TOTAL,
     KEY_SHUNT_POWER,
     KEY_SHUNT_SOC,
     KEY_SHUNT_VOLTAGE,
@@ -64,7 +65,8 @@ __all__ = [
     "KEY_SHUNT_CURRENT",
     "KEY_SHUNT_POWER",
     "KEY_SHUNT_SOC",
-    "KEY_SHUNT_ENERGY",
+    "KEY_SHUNT_ENERGY_CHARGED_TOTAL",
+    "KEY_SHUNT_ENERGY_DISCHARGED_TOTAL",
     "parse_shunt_payload",
     "ShuntBleClient",
 ]
