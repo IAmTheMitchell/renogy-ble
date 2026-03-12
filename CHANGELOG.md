@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## [2.0.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.3.1...v2.0.0) (2026-03-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* require Python 3.14 ([#55](https://github.com/IAmTheMitchell/renogy-ble/issues/55))
+
+### Features
+
+* require Python 3.14 ([#55](https://github.com/IAmTheMitchell/renogy-ble/issues/55)) ([245b006](https://github.com/IAmTheMitchell/renogy-ble/commit/245b0066a0a045e242d7021f8479ff16e95c9ee3))
+
+
+### Bug Fixes
+
+* relax the bleak-retry-connector version requirement to be compatible with Home Assistant 2026.3.0 ([#56](https://github.com/IAmTheMitchell/renogy-ble/issues/56)) ([e8b9297](https://github.com/IAmTheMitchell/renogy-ble/commit/e8b9297c28b699a10c7c6b5d3b99fc776f9b85eb))
+* rerun prerelease on release please updates ([#53](https://github.com/IAmTheMitchell/renogy-ble/issues/53)) ([3892614](https://github.com/IAmTheMitchell/renogy-ble/commit/38926149753eb05d87c5b6dee26d0c942713925f))
+
 ## [1.3.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.3.0...v1.3.1) (2026-03-11)
 
 
