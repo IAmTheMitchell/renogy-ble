@@ -179,3 +179,7 @@ repomix-output.xml
 
 # Codex/uv cache
 .codex-cache/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
