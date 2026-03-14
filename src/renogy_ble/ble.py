@@ -56,6 +56,12 @@ COMMANDS = {
         "reverse_charging_voltage": (3, 57376, 1),  # 0xE020 (1 word)
         "solar_cutoff_current": (3, 57400, 1),  # 0xE038 (1 word)
     },
+    "inverter": {
+        "main_data": (3, 4000, 32),
+        "load_data": (3, 4408, 6),
+        "device_id": (3, 4109, 1),
+        "model": (3, 4311, 8),
+    },
 }
 
 
@@ -377,6 +383,23 @@ class RenogyBleClient:
                 max_attempts=self._max_attempts,
             )
             return await shunt_client.read_device(device)
+
+        if device.device_type == "inverter":
+            try:
+                from renogy_ble.inverter import InverterBleClient
+            except ImportError as exc:
+                error = ValueError(
+                    "Unsupported device type: inverter (Inverter client is unavailable)"
+                )
+                logger.error("%s", error)
+                return RenogyBleReadResult(False, dict(device.parsed_data), exc)
+
+            inverter_client = InverterBleClient(
+                scanner=self._scanner,
+                max_notification_wait_time=self._max_notification_wait_time,
+                max_attempts=self._max_attempts,
+            )
+            return await inverter_client.read_device(device)
 
         commands = self._commands.get(device.device_type)
         if not commands:

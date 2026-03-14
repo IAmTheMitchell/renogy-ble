@@ -24,6 +24,12 @@ from renogy_ble.ble import (
     create_modbus_write_request,
     modbus_crc,
 )
+from renogy_ble.inverter import (
+    INVERTER_COMMANDS,
+    INVERTER_DEVICE_ID,
+    INVERTER_INIT_CHAR_UUID,
+    InverterBleClient,
+)
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
@@ -48,6 +54,9 @@ __all__ = [
     "COMMANDS",
     "DEFAULT_DEVICE_ID",
     "DEFAULT_DEVICE_TYPE",
+    "INVERTER_COMMANDS",
+    "INVERTER_DEVICE_ID",
+    "INVERTER_INIT_CHAR_UUID",
     "LOAD_CONTROL_REGISTER",
     "MAX_NOTIFICATION_WAIT_TIME",
     "RENOGY_READ_CHAR_UUID",
@@ -61,6 +70,7 @@ __all__ = [
     "create_modbus_read_request",
     "create_modbus_write_request",
     "modbus_crc",
+    "InverterBleClient",
     "KEY_SHUNT_VOLTAGE",
     "KEY_SHUNT_CURRENT",
     "KEY_SHUNT_POWER",

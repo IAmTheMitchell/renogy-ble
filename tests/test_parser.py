@@ -12,7 +12,12 @@ from unittest.mock import patch
 import pytest
 
 # Import the modules to be tested
-from renogy_ble.parser import ControllerParser, RenogyBaseParser, parse_value
+from renogy_ble.parser import (
+    ControllerParser,
+    InverterParser,
+    RenogyBaseParser,
+    parse_value,
+)
 
 
 def test_parse_value_big_endian():
@@ -177,6 +182,12 @@ def controller_parser():
     return ControllerParser()
 
 
+@pytest.fixture
+def inverter_parser():
+    """Fixture that returns an InverterParser instance."""
+    return InverterParser()
+
+
 def test_parse_data(controller_parser):
     """Test that parse_data calls the base parse method with the controller type."""
     # Set up mock to return a dummy result
@@ -194,6 +205,18 @@ def test_parse_data(controller_parser):
 
         # Check that parse was called with the correct arguments
         mock_parse.assert_called_once_with(data, "controller", 256)
+
+
+def test_inverter_parse_data(inverter_parser):
+    """Test that parse_data calls the base parse method with the inverter type."""
+    with patch.object(InverterParser, "parse") as mock_parse:
+        mock_parse.return_value = {"battery_voltage": 12.6}
+
+        data = bytes([0x20, 0x03, 0x02, 0x00, 0x7E])
+        result = inverter_parser.parse_data(data, register=4000)
+
+        assert result == {"battery_voltage": 12.6}
+        mock_parse.assert_called_once_with(data, "inverter", 4000)
 
 
 @pytest.fixture
@@ -296,6 +319,65 @@ def test_controller_parsing_register_57348(integration_parser, integration_test_
     assert isinstance(result, dict)
     assert "battery_type" in result
     assert result["battery_type"] == "lithium"
+
+
+def _modbus_response(device_id: int, function_code: int, payload: bytes) -> bytes:
+    frame = bytes([device_id, function_code, len(payload)]) + payload
+    return frame + b"\x00\x00"
+
+
+def test_inverter_parsing_register_4000():
+    """Test parsing inverter main data from register 4000."""
+    parser = RenogyBaseParser()
+    payload = (
+        b"\x00\x00"
+        b"\x00\x00"
+        b"\x08\xfc"
+        b"\x01\xf4"
+        b"\x13\x88"
+        b"\x01\x90"
+        b"\x00\xfd"
+        b"\x00\x00"
+        b"\x00\x00"
+        b"\x13\x88"
+    )
+    result = parser.parse(_modbus_response(0x20, 0x03, payload), "inverter", 4000)
+
+    assert result["ac_output_voltage"] == 230.0
+    assert result["ac_output_current"] == 5.0
+    assert result["ac_output_frequency"] == 50.0
+    assert result["battery_voltage"] == 40.0
+    assert result["temperature"] == 25.3
+    assert result["input_frequency"] == 50.0
+
+
+def test_inverter_parsing_register_4408():
+    """Test parsing inverter load data from register 4408."""
+    parser = RenogyBaseParser()
+    payload = b"\x00\x32\x01\xf4\x02\x26"
+    result = parser.parse(_modbus_response(0x20, 0x03, payload), "inverter", 4408)
+
+    assert result == {"load_active_power": 500, "load_apparent_power": 550}
+
+
+def test_inverter_parsing_register_4109():
+    """Test parsing inverter device ID data."""
+    parser = RenogyBaseParser()
+    result = parser.parse(_modbus_response(0x20, 0x03, b"\x00\x20"), "inverter", 4109)
+
+    assert result == {"device_id": 32}
+
+
+def test_inverter_parsing_register_4311():
+    """Test parsing inverter model data."""
+    parser = RenogyBaseParser()
+    result = parser.parse(
+        _modbus_response(0x20, 0x03, b"RIV1220PU-126\x00\x00\x00"),
+        "inverter",
+        4311,
+    )
+
+    assert result == {"model": "RIV1220PU-126"}
 
 
 def test_partial_data_parsing(integration_parser):

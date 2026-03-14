@@ -17,6 +17,7 @@ from renogy_ble.ble import (
     create_modbus_write_request,
     modbus_crc,
 )
+from renogy_ble.inverter import INVERTER_COMMANDS, INVERTER_DEVICE_ID
 
 
 def _mock_ble_device(name="BT-TH-TEST", address="AA:BB:CC:DD:EE:FF"):
@@ -182,3 +183,130 @@ def test_read_device_shunt300_reports_error_when_shunt_module_missing(monkeypatc
 
     assert result.success is False
     assert isinstance(result.error, ImportError)
+
+
+def test_read_device_delegates_inverter_to_inverter_client(monkeypatch):
+    init_kwargs: dict[str, object] = {}
+
+    class DummyInverterClient:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+
+        async def read_device(self, device):
+            device.parsed_data = {"model": "RIV1220PU-126"}
+            return MagicMock(success=True, parsed_data=device.parsed_data, error=None)
+
+    from renogy_ble import inverter as inverter_module
+
+    monkeypatch.setattr(inverter_module, "InverterBleClient", DummyInverterClient)
+
+    scanner = object()
+    client = RenogyBleClient(
+        scanner=scanner, max_notification_wait_time=1.5, max_attempts=4
+    )
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRIU123456"), device_type="inverter"
+    )
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data == {"model": "RIV1220PU-126"}
+    assert init_kwargs == {
+        "scanner": scanner,
+        "max_notification_wait_time": 1.5,
+        "max_attempts": 4,
+    }
+
+
+def test_read_device_reads_inverter_commands(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_called = False
+            self._notify_handler: Callable[[object | None, bytearray], None] | None = (
+                None
+            )
+            self.requests: list[bytes] = []
+            self.init_reads: list[str] = []
+
+        async def read_gatt_char(self, uuid: str):
+            self.init_reads.append(uuid)
+            return b"\x01"
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, data, **_kwargs):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+            request = bytes(data)
+            self.requests.append(request)
+            register = int.from_bytes(request[2:4], "big")
+            response = _inverter_response_for_register(register)
+            self._notify_handler(None, bytearray(response))
+
+        async def stop_notify(self, *_args, **_kwargs):
+            return None
+
+        async def disconnect(self):
+            self.disconnect_called = True
+            self.is_connected = False
+
+    def _inverter_response_for_register(register: int) -> bytes:
+        if register == 4000:
+            payload = (
+                b"\x00\x00"
+                b"\x00\x00"
+                b"\x08\xfc"
+                b"\x01\xf4"
+                b"\x13\x88"
+                b"\x01\x90"
+                b"\x00\xfd"
+                b"\x00\x00"
+                b"\x00\x00"
+                b"\x13\x88" + (b"\x00\x00" * 22)
+            )
+        elif register == 4408:
+            payload = b"\x00\x32\x01\xf4\x02\x26" + (b"\x00\x00" * 3)
+        elif register == 4109:
+            payload = b"\x00\x20"
+        elif register == 4311:
+            payload = b"RIV1220PU-126\x00\x00\x00"
+        else:
+            raise AssertionError(f"Unexpected register {register}")
+
+        frame = bytes([INVERTER_DEVICE_ID, 0x03, len(payload)]) + payload
+        crc_low, crc_high = modbus_crc(frame)
+        return frame + bytes([crc_low, crc_high])
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import inverter as inverter_module
+    from renogy_ble.inverter import InverterBleClient
+
+    monkeypatch.setattr(
+        inverter_module, "establish_connection", _fake_establish_connection
+    )
+
+    client = InverterBleClient(commands=INVERTER_COMMANDS)
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRIU123456"), device_type="inverter"
+    )
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data["ac_output_voltage"] == 230.0
+    assert result.parsed_data["battery_voltage"] == 40.0
+    assert result.parsed_data["load_active_power"] == 500
+    assert result.parsed_data["load_apparent_power"] == 550
+    assert result.parsed_data["device_id"] == 32
+    assert result.parsed_data["model"] == "RIV1220PU-126"
+    assert dummy_client.disconnect_called is True
+    assert len(dummy_client.requests) == 4

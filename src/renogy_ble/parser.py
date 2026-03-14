@@ -242,3 +242,26 @@ class DCCParser(RenogyBaseParser):
 
         # Use the base parser's parse method with the device type
         return self.parse(data, self.type, register)
+
+
+class InverterParser(RenogyBaseParser):
+    """
+    Parser specifically for Renogy inverters.
+
+    This parser handles RIV-series Modbus responses exposed over BLE.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the inverter parser."""
+        super().__init__()
+        self.type = "inverter"
+
+    def parse_data(
+        self, data: bytes, register: int | None = None
+    ) -> dict[str, int | float | str]:
+        """Parse raw data from an inverter device."""
+        if register is None:
+            logger.warning("Register parameter is required but not provided")
+            return {}
+
+        return self.parse(data, self.type, register)
