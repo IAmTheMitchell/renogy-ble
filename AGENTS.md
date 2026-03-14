@@ -78,3 +78,12 @@ This repo uses `bd` (Beads) for active task tracking.
 - For cross-repo work, create the coordinating issue in `renogy-ha` and link the local implementation issue here with a dependency.
 - When you want `renogy-ha` to hydrate the latest `renogy-ble` issues, run `bd export -o .beads/issues.jsonl` here, then run `bd repo sync` in `renogy-ha`. This is required for multi-repo hydration with `bd 0.60.0`.
 - Do not use markdown TODO lists for active work.
+
+## External Contributors
+
+External contributors may submit normal PRs without using Beads.
+
+- Maintainers use Beads for planning and coordination.
+- If you are not using Beads, ignore Beads-specific task-tracking steps and follow the normal repo instructions for code, tests, and PR quality.
+- Do not modify tracked Beads configuration unless your change is specifically about the Beads workflow.
+- Do not commit runtime Beads artifacts such as `.beads/issues.jsonl`.
