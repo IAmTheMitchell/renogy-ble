@@ -7,11 +7,14 @@ from renogy_ble import shunt as shunt_module
 from renogy_ble.ble import RenogyBLEDevice
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
+    KEY_SHUNT_DECODE_CONFIDENCE,
     KEY_SHUNT_ENERGY_CHARGED_TOTAL,
     KEY_SHUNT_ENERGY_DISCHARGED_TOTAL,
     KEY_SHUNT_POWER,
+    KEY_SHUNT_READING_VERIFIED,
     KEY_SHUNT_SOC,
     KEY_SHUNT_VOLTAGE,
+    SHUNT_LIVE_HEADER,
     ShuntBleClient,
     _find_valid_payload_window,
     parse_shunt_payload,
@@ -19,10 +22,15 @@ from renogy_ble.shunt import (
 
 
 def _build_payload(
-    voltage: float = 13.2, current: float = -5.4, starter_voltage: float = 13.1
+    voltage: float = 13.2,
+    current: float = -5.4,
+    starter_voltage: float = 13.1,
+    *,
+    header: bytes = SHUNT_LIVE_HEADER,
 ) -> bytes:
     """Build a synthetic 110-byte Smart Shunt payload."""
     payload = bytearray(110)
+    payload[0 : len(header)] = header
     payload[25:28] = int(voltage * 1000).to_bytes(3, "big", signed=False)
     payload[21:24] = int(current * 1000).to_bytes(3, "big", signed=True)
     payload[30:32] = int(starter_voltage * 1000).to_bytes(2, "big", signed=False)
@@ -42,7 +50,15 @@ def test_parse_shunt_payload_returns_expected_fields() -> None:
     assert data[KEY_SHUNT_SOC] == 85.4
     assert data[KEY_SHUNT_ENERGY_CHARGED_TOTAL] is None
     assert data[KEY_SHUNT_ENERGY_DISCHARGED_TOTAL] is None
+    assert data[KEY_SHUNT_DECODE_CONFIDENCE] == "live_header"
+    assert data[KEY_SHUNT_READING_VERIFIED] is True
     assert data["battery_temperature"] == 24.5
+
+
+def test_parse_shunt_payload_rejects_non_live_header() -> None:
+    """Validate non-live 4257 subtype frames are rejected."""
+    data = parse_shunt_payload(_build_payload(header=bytes.fromhex("4257010b")))
+    assert data is None
 
 
 def test_parse_shunt_payload_rejects_out_of_range_voltage() -> None:
@@ -75,6 +91,38 @@ def test_find_valid_payload_window_recovers_from_misaligned_frame() -> None:
     assert raw_payload == valid_payload
     assert parsed[KEY_SHUNT_VOLTAGE] == 13.2
     assert parsed[KEY_SHUNT_CURRENT] == 4.3
+
+
+def test_find_valid_payload_window_prefers_live_frame_over_history_frame() -> None:
+    """Validate history frames are skipped until a live payload is found."""
+    history_payload = _build_payload(
+        voltage=13.4, current=1.1, header=bytes.fromhex("4257010b")
+    )
+    live_payload = _build_payload(voltage=14.2, current=5.6)
+
+    result = _find_valid_payload_window(
+        history_payload + b"\xaa\xbb" + live_payload, expected_length=110
+    )
+
+    assert result is not None
+    raw_payload, parsed = result
+    assert raw_payload == live_payload
+    assert parsed[KEY_SHUNT_VOLTAGE] == 14.2
+    assert parsed[KEY_SHUNT_CURRENT] == 5.6
+
+
+def test_find_valid_payload_window_strips_framed_live_packet() -> None:
+    """Validate the parser strips the observed 61d2 framing prefix."""
+    live_payload = _build_payload(voltage=13.9, current=2.4)
+    framed_payload = bytes.fromhex("61d20000") + live_payload
+
+    result = _find_valid_payload_window(framed_payload, expected_length=110)
+
+    assert result is not None
+    raw_payload, parsed = result
+    assert raw_payload == live_payload
+    assert parsed[KEY_SHUNT_VOLTAGE] == 13.9
+    assert parsed[KEY_SHUNT_CURRENT] == 2.4
 
 
 def test_energy_integration_tracks_totals_for_each_device_separately() -> None:
@@ -125,8 +173,8 @@ def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:
     return device
 
 
-def test_read_device_clears_stale_data_on_connection_failure(monkeypatch) -> None:
-    """Validate failed reads do not return stale parsed data."""
+def test_read_device_preserves_stale_data_on_connection_failure(monkeypatch) -> None:
+    """Validate failed reads preserve the last known good parsed data."""
 
     async def _fake_establish_connection(*_args, **_kwargs):
         raise asyncio.TimeoutError("connect timeout")
@@ -143,8 +191,8 @@ def test_read_device_clears_stale_data_on_connection_failure(monkeypatch) -> Non
 
     assert result.success is False
     assert isinstance(result.error, asyncio.TimeoutError)
-    assert result.parsed_data == {}
-    assert device.parsed_data == {}
+    assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
+    assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
 
 
 def test_read_device_parses_misaligned_notification_stream(monkeypatch) -> None:
@@ -183,3 +231,45 @@ def test_read_device_parses_misaligned_notification_stream(monkeypatch) -> None:
     assert result.error is None
     assert result.parsed_data[KEY_SHUNT_VOLTAGE] == 14.1
     assert result.parsed_data[KEY_SHUNT_CURRENT] == 3.2
+
+
+def test_read_device_preserves_last_good_data_on_history_only_payload(
+    monkeypatch,
+) -> None:
+    """Validate non-live payloads do not overwrite the last good reading."""
+    history_payload = _build_payload(
+        voltage=14.8, current=4.1, header=bytes.fromhex("4257010b")
+    )
+
+    class DummyClient:
+        def __init__(self) -> None:
+            self.is_connected = True
+            self._notify_handler = None
+
+        async def start_notify(self, _uuid, handler):
+            self._notify_handler = handler
+            self._notify_handler(1, bytearray(history_payload))
+
+        async def stop_notify(self, *_args, **_kwargs):
+            return None
+
+        async def disconnect(self):
+            self.is_connected = False
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return DummyClient()
+
+    monkeypatch.setattr(
+        shunt_module, "establish_connection", _fake_establish_connection
+    )
+
+    client = ShuntBleClient(max_notification_wait_time=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="SHUNT300")
+    device.parsed_data = {"shunt_voltage": 13.2, "raw_payload": "last-good"}
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert isinstance(result.error, RuntimeError)
+    assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "last-good"}
+    assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "last-good"}
