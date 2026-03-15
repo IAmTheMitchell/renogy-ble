@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.1.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.0.0...v2.1.0) (2026-03-15)
+
+
+### Features
+
+* add Renogy inverter BLE/protocol support ([0bc6799](https://github.com/IAmTheMitchell/renogy-ble/commit/0bc679973b019893b54be9753f7d1729290754a2))
+
 ## [2.0.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v1.3.1...v2.0.0) (2026-03-12)
 
 
