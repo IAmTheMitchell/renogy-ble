@@ -396,6 +396,10 @@ class RenogyBleClient:
 
             inverter_client = InverterBleClient(
                 scanner=self._scanner,
+                device_id=self._device_id,
+                commands=self._commands.get("inverter"),
+                read_char_uuid=self._read_char_uuid,
+                write_char_uuid=self._write_char_uuid,
                 max_notification_wait_time=self._max_notification_wait_time,
                 max_attempts=self._max_attempts,
             )

@@ -187,6 +187,9 @@ def test_read_device_shunt300_reports_error_when_shunt_module_missing(monkeypatc
 
 def test_read_device_delegates_inverter_to_inverter_client(monkeypatch):
     init_kwargs: dict[str, object] = {}
+    custom_commands = {"inverter": {"main_data": (3, 5000, 2)}}
+    read_char_uuid = "0000aaa1-0000-1000-8000-00805f9b34fb"
+    write_char_uuid = "0000aaa2-0000-1000-8000-00805f9b34fb"
 
     class DummyInverterClient:
         def __init__(self, **kwargs):
@@ -202,7 +205,13 @@ def test_read_device_delegates_inverter_to_inverter_client(monkeypatch):
 
     scanner = object()
     client = RenogyBleClient(
-        scanner=scanner, max_notification_wait_time=1.5, max_attempts=4
+        scanner=scanner,
+        device_id=0x42,
+        commands=custom_commands,
+        read_char_uuid=read_char_uuid,
+        write_char_uuid=write_char_uuid,
+        max_notification_wait_time=1.5,
+        max_attempts=4,
     )
     device = RenogyBLEDevice(
         _mock_ble_device(name="RNGRIU123456"), device_type="inverter"
@@ -215,6 +224,10 @@ def test_read_device_delegates_inverter_to_inverter_client(monkeypatch):
     assert result.parsed_data == {"model": "RIV1220PU-126"}
     assert init_kwargs == {
         "scanner": scanner,
+        "device_id": 0x42,
+        "commands": custom_commands["inverter"],
+        "read_char_uuid": read_char_uuid,
+        "write_char_uuid": write_char_uuid,
         "max_notification_wait_time": 1.5,
         "max_attempts": 4,
     }
