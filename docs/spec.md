@@ -1,193 +1,210 @@
-# Renogy BLE Data Parsing Library - Developer Specification
+# Renogy BLE Developer Specification
 
-## **Overview**
-This document outlines the design, requirements, and implementation details for a Python library that parses raw BLE data from **Renogy charge controllers** using **BT-1 and BT-2** Bluetooth modules. The library will be standalone and **only responsible for parsing data**. A future **Home Assistant integration** will handle BLE communication and data retrieval.
+## Overview
 
----
+`renogy-ble` is a standalone Python library for communicating with supported
+Renogy Bluetooth Low Energy devices and parsing their responses into usable
+Python data structures. The library is intentionally independent of Home
+Assistant so it can be reused by other projects.
 
-## **1. Functional Requirements**
+The current implementation includes both transport helpers and parsing logic:
 
-### **1.1 Supported Devices**
-- Initially supports **Renogy Rover charge controllers**.
-- Future support for Wanderer, Adventurer, and other charge controllers using BT-1 and BT-2.
+- Modbus framing for controller-style devices.
+- Dedicated notification-driven clients for Smart Shunt 300 devices.
+- Dedicated notification-driven clients for supported Renogy inverters.
+- A shared register-map-based parsing pipeline that returns flat dictionaries.
 
-### **1.2 Features**
-- Parses **raw BLE Modbus data** from Renogy charge controllers.
-- Extracts **battery, solar input, load output, controller status, and energy stats**.
-- Uses a **flat dictionary structure** (e.g., `{ "battery_voltage": 129, "pv_power": 250 }`).
-- Supports **configurable byte order** for registers.
-- Returns **raw values** (no scaling or unit conversion).
-- No data validation—unexpected values are returned as-is.
-- Logs warnings for **unexpected data lengths** but attempts partial parsing.
+## Supported Devices
 
----
+### Controller-style devices
 
-## **2. Architecture**
+- Renogy charge controllers that communicate through BT-1 or BT-2 modules.
+- DCC devices that use the controller-style Modbus transport.
 
-### **2.1 Library Structure**
+### Direct BLE devices
+
+- Renogy Smart Shunt 300 devices.
+- Renogy inverters that expose the RIV-series BLE register layout.
+
+## Library Responsibilities
+
+The library is responsible for:
+
+- discovering and connecting to supported Renogy BLE devices when the built-in
+  clients are used
+- building Modbus read and write frames, including CRC handling
+- collecting notification payloads from device-specific transports
+- parsing raw responses with device-type-specific register definitions
+- returning flat dictionaries with scaled and mapped values where configured
+
+The library is not responsible for:
+
+- Home Assistant entity management
+- persistence, scheduling, or long-term storage
+- application-specific retry policy outside the device clients provided here
+
+## Architecture
+
+### Package structure
+
+```text
+src/renogy_ble/
+  __init__.py
+  ble.py
+  inverter.py
+  parser.py
+  register_map.py
+  renogy_parser.py
+  shunt.py
+tests/
+  test_ble.py
+  test_parser.py
+  test_shunt.py
 ```
-renogy_ble/
-  ├── __init__.py         # Entry point
-  ├── parser.py           # Main parser logic
-  ├── register_map.py     # Register definitions for each model
-  ├── setup.py            # Packaging metadata
-  ├── pyproject.toml      # Build system support
-  └── tests/
-      ├── test_parser.py  # Unit tests for parsing logic
-```
 
-### **2.2 Components**
-#### **1️⃣ `register_map.py` (Register Definitions)**
-- Stores **register mappings** for different models.
-- Defines **byte order** for each field.
-- Example format:
-  ```python
-  REGISTER_MAP = {
-      "rover": {
-          "battery_voltage": {"register": 256, "length": 2, "byte_order": "big"},
-          "pv_power": {"register": 260, "length": 2, "byte_order": "little"},
-          "charging_status": {
-              "register": 270,
-              "length": 1,
-              "map": {0: "deactivated", 2: "mppt"},
-              "byte_order": "big"
-          }
-      }
-  }
-  ```
+### Core components
 
-#### **2️⃣ `RenogyBaseParser` (Base Class for Parsing)**
-- Loads **register mappings** from `register_map.py`.
-- Extracts **raw values** based on byte order.
-- Supports **partial parsing** if data is incomplete.
+#### `ble.py`
 
-#### **3️⃣ `RoverParser` (Model-Specific Parser)**
-- Extends `RenogyBaseParser`.
-- Implements **Rover-specific parsing logic**.
+- Defines shared BLE constants and default controller/DCC/inverter command maps.
+- Implements Modbus request builders.
+- Provides `RenogyBLEDevice`.
+- Provides `RenogyBleClient`, which reads controller-style devices directly and
+  delegates `shunt300` and `inverter` devices to dedicated clients.
 
-#### **4️⃣ `RenogyParser` (Entry Point)**
-- Routes data to the correct model parser.
-- API:
-  ```python
-  from renogy_ble import RenogyParser
-  raw_data = b"\x00\x81"  # Example BLE response
-  parsed = RenogyParser.parse(raw_data, model="rover")
-  print(parsed)  # {'battery_voltage': 129}
-  ```
+#### `inverter.py`
 
----
+- Implements `InverterBleClient`.
+- Uses inverter-specific defaults such as `INVERTER_DEVICE_ID`,
+  `INVERTER_INIT_CHAR_UUID`, and `INVERTER_COMMANDS`.
+- Reads the initialization characteristic when available, subscribes to
+  notifications, sends inverter requests, and parses each response into the
+  device state.
 
-## **3. Data Handling**
+#### `shunt.py`
 
-### **3.1 Input Format**
-- Accepts **raw BLE Modbus response bytes**.
-- User must specify the **device model** (e.g., `model="rover"`).
+- Implements the Smart Shunt 300 transport and derived metric handling.
 
-### **3.2 Output Format**
-- Returns a **flat dictionary** of raw values, e.g.:
-  ```python
-  {
-      "battery_voltage": 129,
-      "pv_power": 250,
-      "charging_status": 2
-  }
-  ```
+#### `register_map.py`
 
-### **3.3 Byte Order Handling**
-- Defined per **register** in `register_map.py`.
-- Supports **big-endian** and **little-endian** formats.
-- Example implementation:
-  ```python
-  def parse_value(data, offset, length, byte_order="big"):
-      value = int.from_bytes(data[offset:offset+length], byteorder=byte_order)
-      return value
-  ```
+- Defines register metadata by device type.
+- Includes controller, DCC, and inverter register layouts.
+- Supports scaling, byte order, string fields, and mapped values.
 
----
+#### `parser.py`
 
-## **4. Error Handling**
+- Provides `RenogyBaseParser` plus device-type-specific parsers.
+- Current parser classes include `ControllerParser`, `DCCParser`, and
+  `InverterParser`.
 
-### **4.1 Malformed Data**
-- If the response length is **shorter than expected**:
-  - Logs a warning: `"Warning: Unexpected data length, partial parsing attempted."`
-  - Returns a **partial dictionary** with available fields.
+#### `renogy_parser.py`
 
-### **4.2 Unsupported Model**
-- If the model is **not in `register_map.py`**:
-  - Logs a warning: `"Warning: Unsupported model: unknown_model"`
-  - Returns `{}`.
+- Routes parse requests by `device_type`.
+- Returns `{}` for unsupported device types.
 
-### **4.3 Unknown Data**
-- If the response format **does not match expected registers**:
-  - Logs a warning but **still returns whatever fields can be parsed**.
+## Device Flows
 
----
+### Controller and DCC flow
 
-## **5. Testing Plan**
+1. Connect to the device over BLE.
+2. Subscribe to the standard Renogy read characteristic.
+3. Send Modbus requests over the write characteristic.
+4. Collect notification bytes until the expected response length is reached.
+5. Parse the response for the requested register.
 
-### **5.1 Unit Tests (`tests/test_parser.py`)**
-- ✅ **Test valid data parsing**
-  - Ensure raw bytes are correctly mapped to dictionary values.
-  - Verify handling of **different byte orders**.
-- ✅ **Test partial parsing**
-  - Provide truncated data and ensure expected partial output.
-- ✅ **Test unsupported models**
-  - Pass an invalid model and check that `{}` is returned.
-- ✅ **Test unexpected data length**
-  - Log warning and return partial data.
+### Smart Shunt 300 flow
 
-Example test case:
+1. Connect using the shunt-specific BLE flow.
+2. Consume direct notification payloads.
+3. Parse shunt data and derived totals.
+
+### Inverter flow
+
+1. Connect using `InverterBleClient`.
+2. Attempt to read the inverter initialization characteristic.
+3. Subscribe to the standard Renogy read characteristic.
+4. Send the default inverter command set:
+   - `main_data` at register `4000`
+   - `load_data` at register `4408`
+   - `device_id` at register `4109`
+   - `model` at register `4311`
+5. Parse each successful response and merge it into the device state.
+
+## Public API
+
+The package exports the shared BLE and parsing entry points plus device-specific
+helpers:
+
+- `RenogyBleClient`
+- `RenogyBLEDevice`
+- `RenogyParser`
+- `ShuntBleClient`
+- `InverterBleClient`
+- `COMMANDS`
+- `INVERTER_COMMANDS`
+- `DEFAULT_DEVICE_ID`
+- `INVERTER_DEVICE_ID`
+- `INVERTER_INIT_CHAR_UUID`
+
+## Data Handling
+
+### Input requirements
+
+Raw parser calls require:
+
+- the full Modbus response frame, including address, function code, byte count,
+  payload, and CRC
+- a `device_type`
+- the starting register for the response
+
+### Output format
+
+Parsers return a flat dictionary. Values may be:
+
+- scaled numeric values such as volts, amps, or hertz
+- mapped string values for enumerations
+- decoded strings for text registers such as inverter model identifiers
+
+Example output:
+
 ```python
-import unittest
-from renogy_ble import RenogyParser
-
-class TestRenogyParser(unittest.TestCase):
-    def test_rover_parsing(self):
-        raw_data = b"\x00\x81\x00\xFA"  # Fake response
-        parsed = RenogyParser.parse(raw_data, model="rover")
-        self.assertEqual(parsed["battery_voltage"], 129)
+{
+    "battery_voltage": 40.0,
+    "ac_output_voltage": 230.0,
+    "load_active_power": 500,
+    "model": "RIV1220PU-126",
+}
 ```
 
----
+## Error Handling
 
-## **6. Packaging & Deployment**
+The current implementation follows these rules:
 
-### **6.1 PyPI Packaging**
-- Library will be published as `renogy-ble`.
-- Installable via:
-  ```sh
-  pip install renogy-ble
-  ```
+- connection failures return an unsuccessful read result with the underlying
+  exception attached
+- short or malformed responses are logged and skipped when possible
+- partial parsing is allowed when enough data exists for individual fields
+- unsupported device types return empty parse results
+- inverter reads succeed when at least one configured command is parsed
 
-### **6.2 `setup.py` (Example Metadata)**
-```python
-from setuptools import setup, find_packages
+## Extensibility
 
-setup(
-    name="renogy-ble",
-    version="0.1.0",
-    packages=find_packages(),
-    install_requires=[],
-    author="Your Name",
-    description="Python library for parsing BLE data from Renogy charge controllers.",
-    url="https://github.com/yourrepo/renogy-ble",
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-    ],
-)
-```
+To add support for a new device type:
 
----
+1. Add register definitions to `register_map.py`.
+2. Add or extend a parser in `parser.py`.
+3. Route the new type in `renogy_parser.py`.
+4. If the transport differs from controller-style Modbus reads, add a dedicated
+   BLE client and delegate to it from `RenogyBleClient.read_device()`.
+5. Add unit tests that cover transport behavior and parsing.
 
-## **7. Next Steps**
-- ✅ Finalize `register_map.py` for Rover.
-- ✅ Implement `RenogyBaseParser` and `RoverParser`.
-- ✅ Write unit tests.
-- ✅ Package and publish to PyPI.
+## Verification Expectations
 
----
+Changes should be validated with the repository standard workflow:
 
-## **Final Notes**
-This library is designed for **Home Assistant integration** but can be used in any project that needs **raw Renogy BLE data parsing**. The architecture allows **easy expansion** to other models in the future.
+1. `uv run ruff format .`
+2. `uv run ruff check . --output-format=github`
+3. `uv run ty check . --output-format=github`
+4. `uv run pytest tests`
 
+All four steps should pass in a single run before changes are considered ready.
