@@ -99,24 +99,26 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
     }
 
 
-def _extract_live_payload_window(payload: bytes, expected_length: int) -> bytes | None:
-    """Return a normalized live-data payload window from the stream head."""
-    if len(payload) >= expected_length and payload.startswith(SHUNT_LIVE_HEADER):
-        return payload[:expected_length]
+def _extract_live_payload_window(
+    payload: bytes, offset: int, expected_length: int
+) -> bytes | None:
+    """Return a normalized live-data payload window from the given stream offset."""
+    payload_length = len(payload)
+    if (
+        payload_length >= offset + expected_length
+        and payload[offset : offset + len(SHUNT_LIVE_HEADER)] == SHUNT_LIVE_HEADER
+    ):
+        return payload[offset : offset + expected_length]
 
     framed_length = expected_length + SHUNT_FRAMED_PREFIX_LENGTH
+    framed_offset = offset + SHUNT_FRAMED_PREFIX_LENGTH
     if (
-        len(payload) >= framed_length
-        and payload.startswith(SHUNT_FRAMED_PREFIX)
-        and payload[
-            SHUNT_FRAMED_PREFIX_LENGTH : SHUNT_FRAMED_PREFIX_LENGTH
-            + len(SHUNT_LIVE_HEADER)
-        ]
+        payload_length >= offset + framed_length
+        and payload[offset : offset + len(SHUNT_FRAMED_PREFIX)] == SHUNT_FRAMED_PREFIX
+        and payload[framed_offset : framed_offset + len(SHUNT_LIVE_HEADER)]
         == SHUNT_LIVE_HEADER
     ):
-        return payload[
-            SHUNT_FRAMED_PREFIX_LENGTH : SHUNT_FRAMED_PREFIX_LENGTH + expected_length
-        ]
+        return payload[framed_offset : framed_offset + expected_length]
 
     return None
 
@@ -130,7 +132,7 @@ def _find_valid_payload_window(
 
     max_offset = len(payload) - expected_length
     for offset in range(max_offset + 1):
-        window = _extract_live_payload_window(payload[offset:], expected_length)
+        window = _extract_live_payload_window(payload, offset, expected_length)
         if window is None:
             continue
         parsed = parse_shunt_payload(window)
