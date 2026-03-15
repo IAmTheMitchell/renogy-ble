@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.1.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.1.0...v2.1.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* harden smart shunt live packet parsing ([#61](https://github.com/IAmTheMitchell/renogy-ble/issues/61)) ([2eb1d2a](https://github.com/IAmTheMitchell/renogy-ble/commit/2eb1d2aee7d139a5b35465ea2e9f6746c266a0f6))
+
 ## [2.1.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.0.0...v2.1.0) (2026-03-15)
 
 
