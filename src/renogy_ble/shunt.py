@@ -19,6 +19,10 @@ SHUNT_NOTIFY_CHAR_UUID = "0000c411-0000-1000-8000-00805f9b34fb"
 
 # Smart Shunt payload size from empirical captures.
 SHUNT_EXPECTED_PAYLOAD_LENGTH = 110
+SHUNT_LIVE_HEADER = bytes.fromhex("42570119")
+SHUNT_FRAMED_PREFIX = bytes.fromhex("61d2")
+SHUNT_FRAMED_PREFIX_LENGTH = 4
+SHUNT_REQUIRED_FIELD_LENGTH = 28
 
 KEY_SHUNT_VOLTAGE = "shunt_voltage"
 KEY_SHUNT_CURRENT = "shunt_current"
@@ -26,6 +30,8 @@ KEY_SHUNT_POWER = "shunt_power"
 KEY_SHUNT_SOC = "shunt_soc"
 KEY_SHUNT_ENERGY_CHARGED_TOTAL = "energy_charged_total"
 KEY_SHUNT_ENERGY_DISCHARGED_TOTAL = "energy_discharged_total"
+KEY_SHUNT_DECODE_CONFIDENCE = "decode_confidence"
+KEY_SHUNT_READING_VERIFIED = "reading_verified"
 
 
 def _bytes_to_number(
@@ -50,6 +56,11 @@ def _bytes_to_number(
 
 def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
     """Parse a raw Smart Shunt notification frame."""
+    if len(payload) < SHUNT_REQUIRED_FIELD_LENGTH:
+        return None
+    if not payload.startswith(SHUNT_LIVE_HEADER):
+        return None
+
     voltage = _bytes_to_number(payload, 25, 3, scale=0.001, decimals=2)
     starter_voltage = _bytes_to_number(payload, 30, 2, scale=0.001, decimals=2)
     current = _bytes_to_number(payload, 21, 3, signed=True, scale=0.001, decimals=2)
@@ -81,9 +92,35 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
         KEY_SHUNT_SOC: soc,
         KEY_SHUNT_ENERGY_CHARGED_TOTAL: None,
         KEY_SHUNT_ENERGY_DISCHARGED_TOTAL: None,
+        KEY_SHUNT_DECODE_CONFIDENCE: "live_header",
+        KEY_SHUNT_READING_VERIFIED: True,
         "starter_battery_voltage": starter_voltage,
         "battery_temperature": battery_temp,
     }
+
+
+def _extract_live_payload_window(
+    payload: bytes, offset: int, expected_length: int
+) -> bytes | None:
+    """Return a normalized live-data payload window from the given stream offset."""
+    payload_length = len(payload)
+    if (
+        payload_length >= offset + expected_length
+        and payload[offset : offset + len(SHUNT_LIVE_HEADER)] == SHUNT_LIVE_HEADER
+    ):
+        return payload[offset : offset + expected_length]
+
+    framed_length = expected_length + SHUNT_FRAMED_PREFIX_LENGTH
+    framed_offset = offset + SHUNT_FRAMED_PREFIX_LENGTH
+    if (
+        payload_length >= offset + framed_length
+        and payload[offset : offset + len(SHUNT_FRAMED_PREFIX)] == SHUNT_FRAMED_PREFIX
+        and payload[framed_offset : framed_offset + len(SHUNT_LIVE_HEADER)]
+        == SHUNT_LIVE_HEADER
+    ):
+        return payload[framed_offset : framed_offset + expected_length]
+
+    return None
 
 
 def _find_valid_payload_window(
@@ -95,7 +132,9 @@ def _find_valid_payload_window(
 
     max_offset = len(payload) - expected_length
     for offset in range(max_offset + 1):
-        window = payload[offset : offset + expected_length]
+        window = _extract_live_payload_window(payload, offset, expected_length)
+        if window is None:
+            continue
         parsed = parse_shunt_payload(window)
         if parsed is not None:
             return window, parsed
@@ -149,7 +188,6 @@ class ShuntBleClient:
         success = False
         parsed_result: dict[str, Any] | None = None
         raw_payload: bytes | None = None
-        device.parsed_data.clear()
 
         try:
             client = await establish_connection(
@@ -178,7 +216,10 @@ class ShuntBleClient:
                 remaining = self._max_notification_wait_time - (loop.time() - start)
                 if remaining <= 0:
                     break
-                await asyncio.wait_for(event.wait(), remaining)
+                try:
+                    await asyncio.wait_for(event.wait(), remaining)
+                except asyncio.TimeoutError:
+                    break
                 event.clear()
 
                 maybe_parsed = _find_valid_payload_window(
