@@ -27,15 +27,19 @@ def _build_payload(
     starter_voltage: float = 13.1,
     *,
     header: bytes = SHUNT_LIVE_HEADER,
+    length: int = 110,
 ) -> bytes:
     """Build a synthetic 110-byte Smart Shunt payload."""
-    payload = bytearray(110)
+    payload = bytearray(length)
     payload[0 : len(header)] = header
     payload[25:28] = int(voltage * 1000).to_bytes(3, "big", signed=False)
     payload[21:24] = int(current * 1000).to_bytes(3, "big", signed=True)
-    payload[30:32] = int(starter_voltage * 1000).to_bytes(2, "big", signed=False)
-    payload[34:36] = int(85.4 * 10).to_bytes(2, "big", signed=False)
-    payload[66:68] = int(24.5 * 10).to_bytes(2, "big", signed=False)
+    if length >= 32:
+        payload[30:32] = int(starter_voltage * 1000).to_bytes(2, "big", signed=False)
+    if length >= 36:
+        payload[34:36] = int(85.4 * 10).to_bytes(2, "big", signed=False)
+    if length >= 68:
+        payload[66:68] = int(24.5 * 10).to_bytes(2, "big", signed=False)
     return bytes(payload)
 
 
@@ -77,6 +81,16 @@ def test_parse_shunt_payload_rejects_short_payload() -> None:
     """Validate short payloads are rejected."""
     data = parse_shunt_payload(bytes([0x00] * 12))
     assert data is None
+
+
+def test_parse_shunt_payload_accepts_short_live_frame() -> None:
+    """Validate shorter live frames still parse when required fields exist."""
+    data = parse_shunt_payload(_build_payload(voltage=12.8, current=3.1, length=28))
+
+    assert data is not None
+    assert data[KEY_SHUNT_VOLTAGE] == 12.8
+    assert data[KEY_SHUNT_CURRENT] == 3.1
+    assert data["battery_temperature"] is None
 
 
 def test_find_valid_payload_window_recovers_from_misaligned_frame() -> None:
@@ -123,6 +137,19 @@ def test_find_valid_payload_window_strips_framed_live_packet() -> None:
     assert raw_payload == live_payload
     assert parsed[KEY_SHUNT_VOLTAGE] == 13.9
     assert parsed[KEY_SHUNT_CURRENT] == 2.4
+
+
+def test_find_valid_payload_window_supports_shorter_expected_length() -> None:
+    """Validate the configurable expected length still works for shorter live frames."""
+    live_payload = _build_payload(voltage=12.6, current=-1.8, length=28)
+
+    result = _find_valid_payload_window(live_payload, expected_length=28)
+
+    assert result is not None
+    raw_payload, parsed = result
+    assert raw_payload == live_payload
+    assert parsed[KEY_SHUNT_VOLTAGE] == 12.6
+    assert parsed[KEY_SHUNT_CURRENT] == -1.8
 
 
 def test_energy_integration_tracks_totals_for_each_device_separately() -> None:

@@ -22,6 +22,7 @@ SHUNT_EXPECTED_PAYLOAD_LENGTH = 110
 SHUNT_LIVE_HEADER = bytes.fromhex("42570119")
 SHUNT_FRAMED_PREFIX = bytes.fromhex("61d2")
 SHUNT_FRAMED_PREFIX_LENGTH = 4
+SHUNT_REQUIRED_FIELD_LENGTH = 28
 
 KEY_SHUNT_VOLTAGE = "shunt_voltage"
 KEY_SHUNT_CURRENT = "shunt_current"
@@ -55,7 +56,7 @@ def _bytes_to_number(
 
 def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
     """Parse a raw Smart Shunt notification frame."""
-    if len(payload) < SHUNT_EXPECTED_PAYLOAD_LENGTH:
+    if len(payload) < SHUNT_REQUIRED_FIELD_LENGTH:
         return None
     if not payload.startswith(SHUNT_LIVE_HEADER):
         return None
