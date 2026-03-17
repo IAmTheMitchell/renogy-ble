@@ -413,9 +413,9 @@ class RenogyBleClient:
         async with session.lock:
             try:
                 await self._ensure_session_ready(device, session)
-            except (BleakError, asyncio.TimeoutError) as connection_error:
+            except Exception as connection_error:
                 logger.info(
-                    "Failed to establish connection with device %s: %s",
+                    "Failed to prepare BLE session for device %s: %s",
                     device.name,
                     str(connection_error),
                 )
@@ -533,9 +533,9 @@ class RenogyBleClient:
         async with session.lock:
             try:
                 await self._ensure_session_ready(device, session)
-            except (BleakError, asyncio.TimeoutError) as connection_error:
+            except Exception as connection_error:
                 logger.info(
-                    "Failed to establish connection with device %s: %s",
+                    "Failed to prepare BLE session for device %s: %s",
                     device.name,
                     str(connection_error),
                 )

@@ -307,3 +307,84 @@ def test_persistent_session_reuses_connection_for_writes(monkeypatch):
     assert dummy_client.start_notify_calls == 1
     assert dummy_client.stop_notify_calls == 1
     assert dummy_client.disconnect_calls == 1
+
+
+def test_read_device_cleans_up_when_notify_setup_raises_runtime_error(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+
+        async def start_notify(self, *_args, **_kwargs):
+            raise RuntimeError("notify setup failed")
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        commands={"test_device": {"status": (3, 0x0000, 1)}},
+        transport_mode="persistent_session",
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="test_device")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert isinstance(result.error, RuntimeError)
+    assert str(result.error) == "notify setup failed"
+    assert dummy_client.stop_notify_calls == 0
+    assert dummy_client.disconnect_calls == 1
+
+
+def test_write_single_register_cleans_up_when_notify_setup_raises_runtime_error(
+    monkeypatch,
+):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+
+        async def start_notify(self, *_args, **_kwargs):
+            raise RuntimeError("notify setup failed")
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(transport_mode="persistent_session")
+    device = RenogyBLEDevice(_mock_ble_device())
+
+    result = asyncio.run(client.write_single_register(device, 0x010A, 0x0001))
+
+    assert result.success is False
+    assert isinstance(result.error, RuntimeError)
+    assert str(result.error) == "notify setup failed"
+    assert dummy_client.stop_notify_calls == 0
+    assert dummy_client.disconnect_calls == 1
