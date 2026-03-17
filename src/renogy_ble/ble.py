@@ -6,9 +6,9 @@ import asyncio
 import inspect
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
@@ -33,6 +33,9 @@ DEFAULT_DEVICE_ID = 0xFF
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
+
+# Default transport mode for request/response devices.
+DEFAULT_TRANSPORT_MODE = "per_operation"
 
 # Controller register for DC load control
 LOAD_CONTROL_REGISTER = 0x010A
@@ -336,6 +339,20 @@ class RenogyBleWriteResult:
     error: Exception | None = None
 
 
+TransportMode = Literal["per_operation", "persistent_session"]
+
+
+@dataclass(slots=True)
+class _PersistentBleSession:
+    """Track a persistent BLE connection for a single device."""
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    client: BleakClientWithServiceCache | None = None
+    notification_event: asyncio.Event = field(default_factory=asyncio.Event)
+    notification_data: bytearray = field(default_factory=bytearray)
+    notify_started: bool = False
+
+
 class RenogyBleClient:
     """Handle BLE connection and Modbus I/O for Renogy devices."""
 
@@ -349,8 +366,12 @@ class RenogyBleClient:
         write_char_uuid: str = RENOGY_WRITE_CHAR_UUID,
         max_notification_wait_time: float = MAX_NOTIFICATION_WAIT_TIME,
         max_attempts: int = 3,
+        transport_mode: TransportMode = DEFAULT_TRANSPORT_MODE,
     ) -> None:
         """Initialize the BLE client."""
+        if transport_mode not in ("per_operation", "persistent_session"):
+            raise ValueError(f"Unsupported transport mode: {transport_mode}")
+
         self._scanner = scanner
         self._device_id = device_id
         self._commands = commands or COMMANDS
@@ -358,6 +379,9 @@ class RenogyBleClient:
         self._write_char_uuid = write_char_uuid
         self._max_notification_wait_time = max_notification_wait_time
         self._max_attempts = max_attempts
+        self._transport_mode = transport_mode
+        self._persistent_sessions: dict[str, _PersistentBleSession] = {}
+        self._persistent_sessions_guard = asyncio.Lock()
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect to a device, fetch data, and return parsed results."""
@@ -384,129 +408,117 @@ class RenogyBleClient:
             logger.error("%s", error)
             return RenogyBleReadResult(False, dict(device.parsed_data), error)
 
+        session = await self._prepare_session(device)
         device.parsed_data.clear()
-
-        connection_kwargs = self._connection_kwargs()
-        any_command_succeeded = False
-        error: Exception | None = None
-
-        client = None
-        try:
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                device.ble_device,
-                device.name or device.address,
-                max_attempts=self._max_attempts,
-                **connection_kwargs,
-            )
-        except (BleakError, asyncio.TimeoutError) as connection_error:
-            logger.info(
-                "Failed to establish connection with device %s: %s",
-                device.name,
-                str(connection_error),
-            )
-            return RenogyBleReadResult(
-                False, dict(device.parsed_data), connection_error
-            )
-
-        try:
-            logger.debug("Connected to device %s", device.name)
-            notification_event = asyncio.Event()
-            notification_data = bytearray()
-
-            def notification_handler(_sender, data):
-                notification_data.extend(data)
-                notification_event.set()
-
-            await client.start_notify(self._read_char_uuid, notification_handler)
-
-            for cmd_name, cmd in commands.items():
-                notification_data.clear()
-                notification_event.clear()
-
-                modbus_request = create_modbus_read_request(self._device_id, *cmd)
-                logger.debug(
-                    "Sending %s command: %s",
-                    cmd_name,
-                    list(modbus_request),
+        async with session.lock:
+            try:
+                await self._ensure_session_ready(device, session)
+            except (BleakError, asyncio.TimeoutError) as connection_error:
+                logger.info(
+                    "Failed to establish connection with device %s: %s",
+                    device.name,
+                    str(connection_error),
                 )
-                await client.write_gatt_char(self._write_char_uuid, modbus_request)
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+                return RenogyBleReadResult(
+                    False, dict(device.parsed_data), connection_error
+                )
 
-                word_count = cmd[2]
-                expected_len = 3 + word_count * 2 + 2
-                start_time = asyncio.get_running_loop().time()
+            any_command_succeeded = False
+            error: Exception | None = None
 
-                try:
-                    while len(notification_data) < expected_len:
-                        remaining = self._max_notification_wait_time - (
-                            asyncio.get_running_loop().time() - start_time
+            try:
+                logger.debug("Connected to device %s", device.name)
+
+                for cmd_name, cmd in commands.items():
+                    self._reset_notifications(session)
+
+                    modbus_request = create_modbus_read_request(self._device_id, *cmd)
+                    logger.debug(
+                        "Sending %s command: %s",
+                        cmd_name,
+                        list(modbus_request),
+                    )
+                    if session.client is None:
+                        raise RuntimeError("BLE session is not connected")
+                    await session.client.write_gatt_char(
+                        self._write_char_uuid,
+                        modbus_request,
+                    )
+
+                    word_count = cmd[2]
+                    expected_len = 3 + word_count * 2 + 2
+
+                    try:
+                        await self._wait_for_notification_bytes(
+                            session,
+                            expected_len,
+                            cmd_name,
+                            device.name,
                         )
-                        if remaining <= 0:
-                            raise asyncio.TimeoutError()
-                        await asyncio.wait_for(notification_event.wait(), remaining)
-                        notification_event.clear()
-                except asyncio.TimeoutError:
-                    logger.info(
-                        "Timeout – only %s / %s bytes received for %s from device %s",
-                        len(notification_data),
+                    except asyncio.TimeoutError:
+                        continue
+
+                    result_data = bytes(session.notification_data[:expected_len])
+                    logger.debug(
+                        "Received %s data length: %s (expected %s)",
+                        cmd_name,
+                        len(result_data),
                         expected_len,
-                        cmd_name,
-                        device.name,
                     )
-                    continue
 
-                result_data = bytes(notification_data[:expected_len])
-                logger.debug(
-                    "Received %s data length: %s (expected %s)",
-                    cmd_name,
-                    len(result_data),
-                    expected_len,
+                    cmd_success = device.update_parsed_data(
+                        result_data, register=cmd[1], cmd_name=cmd_name
+                    )
+
+                    if cmd_success:
+                        logger.debug(
+                            "Successfully read and parsed %s data from device %s",
+                            cmd_name,
+                            device.name,
+                        )
+                        any_command_succeeded = True
+                    else:
+                        logger.info(
+                            "Failed to parse %s data from device %s",
+                            cmd_name,
+                            device.name,
+                        )
+
+                if not any_command_succeeded:
+                    error = RuntimeError("No commands completed successfully")
+            except BleakError as exc:
+                logger.info("BLE error with device %s: %s", device.name, str(exc))
+                error = exc
+            except Exception as exc:
+                logger.error(
+                    "Error reading data from device %s: %s", device.name, str(exc)
+                )
+                error = exc
+
+            if error is not None:
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+            elif self._transport_mode != "persistent_session":
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=False,
                 )
 
-                cmd_success = device.update_parsed_data(
-                    result_data, register=cmd[1], cmd_name=cmd_name
-                )
-
-                if cmd_success:
-                    logger.debug(
-                        "Successfully read and parsed %s data from device %s",
-                        cmd_name,
-                        device.name,
-                    )
-                    any_command_succeeded = True
-                else:
-                    logger.info(
-                        "Failed to parse %s data from device %s",
-                        cmd_name,
-                        device.name,
-                    )
-
-            await client.stop_notify(self._read_char_uuid)
-            if not any_command_succeeded:
-                error = RuntimeError("No commands completed successfully")
-        except BleakError as exc:
-            logger.info("BLE error with device %s: %s", device.name, str(exc))
-            error = exc
-        except Exception as exc:
-            logger.error("Error reading data from device %s: %s", device.name, str(exc))
-            error = exc
-        finally:
-            if client is not None and client.is_connected:
-                try:
-                    await client.disconnect()
-                    logger.debug("Disconnected from device %s", device.name)
-                except Exception as exc:
-                    logger.debug(
-                        "Error disconnecting from device %s: %s",
-                        device.name,
-                        str(exc),
-                    )
-                    if error is None:
-                        error = exc
-
-        return RenogyBleReadResult(
-            any_command_succeeded, dict(device.parsed_data), error
-        )
+            return RenogyBleReadResult(
+                any_command_succeeded, dict(device.parsed_data), error
+            )
 
     async def write_single_register(
         self,
@@ -516,37 +528,26 @@ class RenogyBleClient:
         function_code: int = 0x06,
     ) -> RenogyBleWriteResult:
         """Write a single register value and return success."""
-        connection_kwargs = self._connection_kwargs()
+        session = await self._prepare_session(device)
 
-        client = None
-        try:
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                device.ble_device,
-                device.name or device.address,
-                max_attempts=self._max_attempts,
-                **connection_kwargs,
-            )
-        except (BleakError, asyncio.TimeoutError) as connection_error:
-            logger.info(
-                "Failed to establish connection with device %s: %s",
-                device.name,
-                str(connection_error),
-            )
-            return RenogyBleWriteResult(False, connection_error)
+        async with session.lock:
+            try:
+                await self._ensure_session_ready(device, session)
+            except (BleakError, asyncio.TimeoutError) as connection_error:
+                logger.info(
+                    "Failed to establish connection with device %s: %s",
+                    device.name,
+                    str(connection_error),
+                )
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+                return RenogyBleWriteResult(False, connection_error)
 
-        notification_event = asyncio.Event()
-        notification_data = bytearray()
-        notification_started = False
-
-        def notification_handler(_sender, data):
-            notification_data.extend(data)
-            notification_event.set()
-
-        try:
-            await client.start_notify(self._read_char_uuid, notification_handler)
-            notification_started = True
-
+            self._reset_notifications(session)
             modbus_request = create_modbus_write_request(
                 self._device_id, register, value, function_code=function_code
             )
@@ -554,115 +555,59 @@ class RenogyBleClient:
                 "Sending write register command: %s",
                 list(modbus_request),
             )
-            await client.write_gatt_char(self._write_char_uuid, modbus_request)
-
-            expected_len = 8
-            exception_len = 5
-            exception_code_mask = function_code | 0x80
-            start_time = asyncio.get_running_loop().time()
-
             try:
-                while True:
-                    remaining = self._max_notification_wait_time - (
-                        asyncio.get_running_loop().time() - start_time
-                    )
-                    if remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    await asyncio.wait_for(notification_event.wait(), remaining)
-                    notification_event.clear()
-
-                    if (
-                        len(notification_data) >= exception_len
-                        and notification_data[0] == self._device_id
-                        and notification_data[1] == exception_code_mask
-                    ):
-                        exception_response = bytes(notification_data[:exception_len])
-                        crc_low, crc_high = modbus_crc(exception_response[:3])
-                        if exception_response[3:5] != bytes([crc_low, crc_high]):
-                            logger.info(
-                                "Write exception CRC mismatch for register %s",
-                                register,
-                            )
-                            return RenogyBleWriteResult(
-                                False, RuntimeError("Exception CRC mismatch")
-                            )
-
-                        exception_code = exception_response[2]
-                        logger.info(
-                            "Write exception response for register %s: code %s",
-                            register,
-                            exception_code,
-                        )
-                        error_message = (
-                            "Modbus exception code "
-                            f"{exception_code} for register {register}"
-                        )
-                        return RenogyBleWriteResult(
-                            False,
-                            RuntimeError(error_message),
-                        )
-
-                    if len(notification_data) >= expected_len:
-                        break
-            except asyncio.TimeoutError:
-                logger.info(
-                    "Timeout – only %s / %s bytes received for write register %s",
-                    len(notification_data),
-                    expected_len,
+                if session.client is None:
+                    raise RuntimeError("BLE session is not connected")
+                await session.client.write_gatt_char(
+                    self._write_char_uuid,
+                    modbus_request,
+                )
+                await self._wait_for_write_response(
+                    session,
                     register,
+                    modbus_request,
+                    function_code,
+                )
+            except asyncio.TimeoutError:
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
                 )
                 return RenogyBleWriteResult(False, asyncio.TimeoutError())
-
-            response = bytes(notification_data[:expected_len])
-            if response[:6] != modbus_request[:6]:
-                logger.info(
-                    "Write response mismatch for register %s. Expected %s got %s",
-                    register,
-                    list(modbus_request[:6]),
-                    list(response[:6]),
+            except BleakError as exc:
+                logger.info("BLE error with device %s: %s", device.name, str(exc))
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
                 )
-                return RenogyBleWriteResult(False, RuntimeError("Response mismatch"))
-
-            crc_low, crc_high = modbus_crc(response[:6])
-            if response[6:8] != bytes([crc_low, crc_high]):
-                logger.info(
-                    "Write response CRC mismatch for register %s",
-                    register,
+                return RenogyBleWriteResult(False, exc)
+            except Exception as exc:
+                logger.error(
+                    "Error writing data to device %s: %s",
+                    device.name,
+                    str(exc),
                 )
-                return RenogyBleWriteResult(False, RuntimeError("CRC mismatch"))
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+                return RenogyBleWriteResult(False, exc)
+
+            if self._transport_mode != "persistent_session":
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=False,
+                )
 
             return RenogyBleWriteResult(True, None)
-
-        except BleakError as exc:
-            logger.info("BLE error with device %s: %s", device.name, str(exc))
-            return RenogyBleWriteResult(False, exc)
-        except Exception as exc:
-            logger.error(
-                "Error writing data to device %s: %s",
-                device.name,
-                str(exc),
-            )
-            return RenogyBleWriteResult(False, exc)
-        finally:
-            if notification_started:
-                try:
-                    await client.stop_notify(self._read_char_uuid)
-                except Exception as exc:
-                    logger.debug(
-                        "Error stopping notify for device %s: %s",
-                        device.name,
-                        str(exc),
-                    )
-            if client is not None and client.is_connected:
-                try:
-                    await client.disconnect()
-                    logger.debug("Disconnected from device %s", device.name)
-                except Exception as exc:
-                    logger.debug(
-                        "Error disconnecting from device %s: %s",
-                        device.name,
-                        str(exc),
-                    )
 
     def _connection_kwargs(self) -> dict[str, Any]:
         """Build connection kwargs for bleak-retry-connector."""
@@ -679,130 +624,233 @@ class RenogyBleClient:
     async def write_register(
         self, device: RenogyBLEDevice, register: int, value: int
     ) -> bool:
-        """Write a single register value to the device.
-
-        Args:
-            device: The target device
-            register: Register address to write (e.g., 0xE004 for battery type)
-            value: 16-bit value to write
-
-        Returns:
-            True if write was successful, False otherwise
-        """
-        connection_kwargs = self._connection_kwargs()
-
-        client = None
-        try:
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                device.ble_device,
-                device.name or device.address,
-                max_attempts=self._max_attempts,
-                **connection_kwargs,
-            )
-        except (BleakError, asyncio.TimeoutError) as connection_error:
-            logger.error(
-                "Failed to connect for write to device %s: %s",
-                device.name,
-                str(connection_error),
-            )
-            return False
-
-        try:
-            logger.debug("Connected to device %s for write", device.name)
-            notification_event = asyncio.Event()
-            notification_data = bytearray()
-
-            def notification_handler(_sender, data):
-                notification_data.extend(data)
-                notification_event.set()
-
-            await client.start_notify(self._read_char_uuid, notification_handler)
-
-            # Build and send the write request
-            modbus_request = create_modbus_write_request(
-                self._device_id, register, value
-            )
-            logger.debug(
-                "Sending write command to register 0x%04X: %s",
-                register,
-                list(modbus_request),
-            )
-            await client.write_gatt_char(self._write_char_uuid, modbus_request)
-
-            # Wait for response (function 06 echoes the request on success)
-            expected_len = 8  # Same length as request
-            try:
-                await asyncio.wait_for(
-                    notification_event.wait(), self._max_notification_wait_time
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Timeout waiting for write response from device %s",
-                    device.name,
-                )
-                await client.stop_notify(self._read_char_uuid)
-                return False
-
-            await client.stop_notify(self._read_char_uuid)
-
-            # Verify response
-            if len(notification_data) < expected_len:
-                logger.error(
-                    "Write response too short: got %s bytes, expected %s",
-                    len(notification_data),
-                    expected_len,
-                )
-                return False
-
-            # Check for error response (function code with high bit set)
-            if notification_data[1] & 0x80:
-                error_code = notification_data[2] if len(notification_data) > 2 else 0
-                logger.error(
-                    "Modbus write error: function code 0x%02X, error code %s",
-                    notification_data[1],
-                    error_code,
-                )
-                return False
-
-            # Verify the echoed register and value match
-            resp_register = (notification_data[2] << 8) | notification_data[3]
-            resp_value = (notification_data[4] << 8) | notification_data[5]
-
-            if resp_register != register or resp_value != value:
-                logger.error(
-                    "Write response mismatch: expected reg=0x%04X val=%s, "
-                    "got reg=0x%04X val=%s",
-                    register,
-                    value,
-                    resp_register,
-                    resp_value,
-                )
-                return False
-
+        """Write a single register value to the device."""
+        result = await self.write_single_register(device, register, value)
+        if result.success:
             logger.info(
                 "Successfully wrote value %s to register 0x%04X on device %s",
                 value,
                 register,
                 device.name,
             )
-            return True
+        return result.success
 
-        except BleakError as exc:
-            logger.error(
-                "BLE error during write to device %s: %s", device.name, str(exc)
+    async def close_device(self, device: RenogyBLEDevice) -> None:
+        """Close any persistent BLE session for the device."""
+        session = await self._persistent_session_for(device.address)
+        if session is None:
+            return
+
+        async with session.lock:
+            await self._close_session(
+                device.address,
+                device.name,
+                session,
+                remove=True,
             )
-            return False
-        except Exception as exc:
-            logger.error("Error writing to device %s: %s", device.name, str(exc))
-            return False
-        finally:
-            if client is not None and client.is_connected:
+
+    async def close(self) -> None:
+        """Close all persistent BLE sessions owned by this client."""
+        async with self._persistent_sessions_guard:
+            sessions = list(self._persistent_sessions.items())
+
+        for address, session in sessions:
+            async with session.lock:
+                await self._close_session(
+                    address,
+                    address,
+                    session,
+                    remove=True,
+                )
+
+    async def _prepare_session(self, device: RenogyBLEDevice) -> _PersistentBleSession:
+        """Return the session to use for the next device transaction."""
+        if self._transport_mode != "persistent_session":
+            return _PersistentBleSession()
+
+        async with self._persistent_sessions_guard:
+            session = self._persistent_sessions.get(device.address)
+            if session is None:
+                session = _PersistentBleSession()
+                self._persistent_sessions[device.address] = session
+            return session
+
+    async def _persistent_session_for(
+        self, address: str
+    ) -> _PersistentBleSession | None:
+        """Look up a stored persistent session by BLE address."""
+        async with self._persistent_sessions_guard:
+            return self._persistent_sessions.get(address)
+
+    async def _ensure_session_ready(
+        self,
+        device: RenogyBLEDevice,
+        session: _PersistentBleSession,
+    ) -> None:
+        """Ensure the BLE connection and notifications are ready for use."""
+        if session.client is None or not session.client.is_connected:
+            connection_kwargs = self._connection_kwargs()
+            session.client = await establish_connection(
+                BleakClientWithServiceCache,
+                device.ble_device,
+                device.name or device.address,
+                max_attempts=self._max_attempts,
+                **connection_kwargs,
+            )
+            session.notify_started = False
+            self._reset_notifications(session)
+
+        if session.notify_started:
+            return
+
+        def notification_handler(_sender, data):
+            session.notification_data.extend(data)
+            session.notification_event.set()
+
+        await session.client.start_notify(self._read_char_uuid, notification_handler)
+        session.notify_started = True
+
+    async def _close_session(
+        self,
+        device_address: str,
+        device_name: str,
+        session: _PersistentBleSession,
+        *,
+        remove: bool,
+    ) -> None:
+        """Stop notifications and disconnect a session."""
+        if session.client is not None:
+            if session.notify_started:
                 try:
-                    await client.disconnect()
+                    await session.client.stop_notify(self._read_char_uuid)
+                except Exception as exc:
+                    logger.debug(
+                        "Error stopping notify for device %s: %s",
+                        device_name,
+                        str(exc),
+                    )
+
+            if session.client.is_connected:
+                try:
+                    await session.client.disconnect()
+                    logger.debug("Disconnected from device %s", device_name)
                 except Exception as exc:
                     logger.debug(
                         "Error disconnecting from device %s: %s",
-                        device.name,
+                        device_name,
                         str(exc),
                     )
+
+        session.client = None
+        session.notify_started = False
+        self._reset_notifications(session)
+
+        if remove:
+            async with self._persistent_sessions_guard:
+                self._persistent_sessions.pop(device_address, None)
+
+    def _reset_notifications(self, session: _PersistentBleSession) -> None:
+        """Clear buffered notification bytes before the next request."""
+        session.notification_data.clear()
+        session.notification_event.clear()
+
+    async def _wait_for_notification_bytes(
+        self,
+        session: _PersistentBleSession,
+        expected_len: int,
+        cmd_name: str,
+        device_name: str,
+    ) -> None:
+        """Wait until enough notification bytes arrive for a read response."""
+        start_time = asyncio.get_running_loop().time()
+
+        while len(session.notification_data) < expected_len:
+            remaining = self._max_notification_wait_time - (
+                asyncio.get_running_loop().time() - start_time
+            )
+            if remaining <= 0:
+                logger.info(
+                    "Timeout – only %s / %s bytes received for %s from device %s",
+                    len(session.notification_data),
+                    expected_len,
+                    cmd_name,
+                    device_name,
+                )
+                raise asyncio.TimeoutError()
+            await asyncio.wait_for(session.notification_event.wait(), remaining)
+            session.notification_event.clear()
+
+    async def _wait_for_write_response(
+        self,
+        session: _PersistentBleSession,
+        register: int,
+        request: bytes | bytearray,
+        function_code: int,
+    ) -> None:
+        """Wait for and validate a Modbus write response."""
+        expected_len = 8
+        exception_len = 5
+        exception_code_mask = function_code | 0x80
+        start_time = asyncio.get_running_loop().time()
+
+        while True:
+            remaining = self._max_notification_wait_time - (
+                asyncio.get_running_loop().time() - start_time
+            )
+            if remaining <= 0:
+                logger.info(
+                    "Timeout – only %s / %s bytes received for write register %s",
+                    len(session.notification_data),
+                    expected_len,
+                    register,
+                )
+                raise asyncio.TimeoutError()
+            await asyncio.wait_for(session.notification_event.wait(), remaining)
+            session.notification_event.clear()
+
+            if (
+                len(session.notification_data) >= exception_len
+                and session.notification_data[0] == self._device_id
+                and session.notification_data[1] == exception_code_mask
+            ):
+                exception_response = bytes(session.notification_data[:exception_len])
+                crc_low, crc_high = modbus_crc(exception_response[:3])
+                if exception_response[3:5] != bytes([crc_low, crc_high]):
+                    logger.info(
+                        "Write exception CRC mismatch for register %s",
+                        register,
+                    )
+                    raise RuntimeError("Exception CRC mismatch")
+
+                exception_code = exception_response[2]
+                logger.info(
+                    "Write exception response for register %s: code %s",
+                    register,
+                    exception_code,
+                )
+                raise RuntimeError(
+                    f"Modbus exception code {exception_code} for register {register}"
+                )
+
+            if len(session.notification_data) < expected_len:
+                continue
+
+            response = bytes(session.notification_data[:expected_len])
+            if response[:6] != request[:6]:
+                logger.info(
+                    "Write response mismatch for register %s. Expected %s got %s",
+                    register,
+                    list(request[:6]),
+                    list(response[:6]),
+                )
+                raise RuntimeError("Response mismatch")
+
+            crc_low, crc_high = modbus_crc(response[:6])
+            if response[6:8] != bytes([crc_low, crc_high]):
+                logger.info(
+                    "Write response CRC mismatch for register %s",
+                    register,
+                )
+                raise RuntimeError("CRC mismatch")
+
+            return
