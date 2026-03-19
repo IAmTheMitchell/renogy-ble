@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.2.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.1.1...v2.2.0) (2026-03-19)
+
+
+### Features
+
+* add persistent BLE session mode ([#67](https://github.com/IAmTheMitchell/renogy-ble/issues/67)) ([909ffe7](https://github.com/IAmTheMitchell/renogy-ble/commit/909ffe786e27597318e5c70503fe7d0a7674f6a3))
+
 ## [2.1.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.1.0...v2.1.1) (2026-03-15)
 
 
