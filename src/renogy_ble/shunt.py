@@ -6,9 +6,10 @@ import asyncio
 import logging
 from typing import Any
 
+from bleak import BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.exc import BleakError
-from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from bleak_retry_connector import establish_connection
 
 from renogy_ble.ble import RenogyBLEDevice, RenogyBleReadResult
 
@@ -191,10 +192,13 @@ class ShuntBleClient:
 
         try:
             client = await establish_connection(
-                BleakClientWithServiceCache,
+                # Smart Shunt reconnects can present a fresh characteristic object
+                # path, so avoid reusing cached service state for each read.
+                BleakClient,
                 device.ble_device,
                 device.name or device.address,
                 max_attempts=self._max_attempts,
+                use_services_cache=False,
             )
         except (BleakError, asyncio.TimeoutError) as exc:
             logger.info("Failed to connect to Smart Shunt %s: %s", device.address, exc)
