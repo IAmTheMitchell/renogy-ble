@@ -205,10 +205,13 @@ def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:
 def test_read_device_preserves_stale_data_on_connection_failure(monkeypatch) -> None:
     """Validate failed reads preserve the last known good parsed data."""
     connection_client_class = None
+    connection_kwargs = None
 
     async def _fake_establish_connection(client_class, *_args, **_kwargs):
         nonlocal connection_client_class
+        nonlocal connection_kwargs
         connection_client_class = client_class
+        connection_kwargs = _kwargs
         raise asyncio.TimeoutError("connect timeout")
 
     monkeypatch.setattr(
@@ -226,6 +229,8 @@ def test_read_device_preserves_stale_data_on_connection_failure(monkeypatch) -> 
     assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
     assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
     assert connection_client_class is BleakClient
+    assert connection_kwargs is not None
+    assert connection_kwargs["use_services_cache"] is False
 
 
 def test_read_device_parses_misaligned_notification_stream(monkeypatch) -> None:

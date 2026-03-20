@@ -198,6 +198,7 @@ class ShuntBleClient:
                 device.ble_device,
                 device.name or device.address,
                 max_attempts=self._max_attempts,
+                use_services_cache=False,
             )
         except (BleakError, asyncio.TimeoutError) as exc:
             logger.info("Failed to connect to Smart Shunt %s: %s", device.address, exc)
