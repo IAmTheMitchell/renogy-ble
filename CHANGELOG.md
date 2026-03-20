@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.2.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.0...v2.2.1) (2026-03-20)
+
+
+### Bug Fixes
+
+* avoid cached client for Smart Shunt reads ([#69](https://github.com/IAmTheMitchell/renogy-ble/issues/69)) ([97958c6](https://github.com/IAmTheMitchell/renogy-ble/commit/97958c68db2f2a3e9c76895c218c53288993f88d))
+
 ## [2.2.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.1.1...v2.2.0) (2026-03-19)
 
 
