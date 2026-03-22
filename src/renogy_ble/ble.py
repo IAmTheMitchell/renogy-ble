@@ -468,24 +468,22 @@ class RenogyBleClient:
                     )
 
                     word_count = cmd[2]
-                    expected_len = 3 + word_count * 2 + 2
 
                     try:
-                        await self._wait_for_notification_bytes(
+                        result_data = await self._wait_for_valid_read_response(
                             session,
-                            expected_len,
-                            cmd_name,
-                            device.name,
+                            function_code=cmd[0],
+                            word_count=word_count,
+                            cmd_name=cmd_name,
+                            device_name=device.name,
                         )
                     except asyncio.TimeoutError:
                         continue
 
-                    result_data = bytes(session.notification_data[:expected_len])
                     logger.debug(
-                        "Received %s data length: %s (expected %s)",
+                        "Received valid %s data length: %s",
                         cmd_name,
                         len(result_data),
-                        expected_len,
                     )
 
                     cmd_success = device.update_parsed_data(
@@ -770,6 +768,36 @@ class RenogyBleClient:
         session.notification_data.clear()
         session.notification_event.clear()
 
+    def _extract_valid_read_response(
+        self,
+        notification_data: bytes | bytearray,
+        *,
+        function_code: int,
+        word_count: int,
+    ) -> bytes | None:
+        """Return the first valid Modbus read frame from buffered notifications."""
+        expected_payload_bytes = word_count * 2
+        expected_len = 3 + expected_payload_bytes + 2
+        max_offset = len(notification_data) - expected_len
+
+        if max_offset < 0:
+            return None
+
+        for offset in range(max_offset + 1):
+            candidate = bytes(notification_data[offset : offset + expected_len])
+            if candidate[0] != self._device_id or candidate[1] != function_code:
+                continue
+            if candidate[2] != expected_payload_bytes:
+                continue
+
+            crc_low, crc_high = modbus_crc(candidate[:-2])
+            if candidate[-2:] != bytes([crc_low, crc_high]):
+                continue
+
+            return candidate
+
+        return None
+
     async def _wait_for_notification_bytes(
         self,
         session: _PersistentBleSession,
@@ -793,6 +821,43 @@ class RenogyBleClient:
                     device_name,
                 )
                 raise asyncio.TimeoutError()
+            await asyncio.wait_for(session.notification_event.wait(), remaining)
+            session.notification_event.clear()
+
+    async def _wait_for_valid_read_response(
+        self,
+        session: _PersistentBleSession,
+        *,
+        function_code: int,
+        word_count: int,
+        cmd_name: str,
+        device_name: str,
+    ) -> bytes:
+        """Wait for a valid Modbus read frame in buffered notifications."""
+        expected_len = 3 + word_count * 2 + 2
+        start_time = asyncio.get_running_loop().time()
+
+        while True:
+            response = self._extract_valid_read_response(
+                session.notification_data,
+                function_code=function_code,
+                word_count=word_count,
+            )
+            if response is not None:
+                return response
+
+            remaining = self._max_notification_wait_time - (
+                asyncio.get_running_loop().time() - start_time
+            )
+            if remaining <= 0:
+                logger.info(
+                    "Timeout – no valid %s frame after %s bytes from device %s",
+                    cmd_name,
+                    max(len(session.notification_data), expected_len),
+                    device_name,
+                )
+                raise asyncio.TimeoutError()
+
             await asyncio.wait_for(session.notification_event.wait(), remaining)
             session.notification_event.clear()
 

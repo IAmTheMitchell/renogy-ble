@@ -56,6 +56,34 @@ def test_create_modbus_write_request_defaults_function_code():
     assert frame[6:] == bytes([crc_low, crc_high])
 
 
+def test_extract_valid_read_response_skips_junk_prefix():
+    client = RenogyBleClient()
+    payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34])
+    crc_low, crc_high = modbus_crc(payload)
+    valid_frame = payload + bytes([crc_low, crc_high])
+
+    response = client._extract_valid_read_response(
+        b"\x99\x88" + valid_frame,
+        function_code=0x03,
+        word_count=1,
+    )
+
+    assert response == valid_frame
+
+
+def test_extract_valid_read_response_rejects_invalid_crc():
+    client = RenogyBleClient()
+    invalid_frame = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34, 0x00, 0x00])
+
+    response = client._extract_valid_read_response(
+        invalid_frame,
+        function_code=0x03,
+        word_count=1,
+    )
+
+    assert response is None
+
+
 def test_clean_device_name_strips_whitespace():
     assert clean_device_name("  Renogy  BLE\t") == "Renogy BLE"
     assert clean_device_name("") == ""
@@ -103,7 +131,9 @@ def test_read_device_skips_disconnect_when_not_connected(monkeypatch):
             # Provide enough bytes to satisfy expected length (7 bytes).
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
-            self._notify_handler(None, b"\x01\x03\x02\x00\x00\x00\x00")
+            payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x00, 0x00])
+            crc_low, crc_high = modbus_crc(payload)
+            self._notify_handler(None, payload + bytes([crc_low, crc_high]))
 
         async def stop_notify(self, *_args, **_kwargs):
             return None
@@ -200,7 +230,9 @@ def test_persistent_session_reuses_connection_for_reads(monkeypatch):
         async def write_gatt_char(self, *_args, **_kwargs):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
-            self._notify_handler(None, b"\x01\x03\x02\x00\x00\x00\x00")
+            payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x00, 0x00])
+            crc_low, crc_high = modbus_crc(payload)
+            self._notify_handler(None, payload + bytes([crc_low, crc_high]))
 
         async def stop_notify(self, *_args, **_kwargs):
             self.stop_notify_calls += 1
@@ -250,6 +282,65 @@ def test_persistent_session_reuses_connection_for_reads(monkeypatch):
     assert dummy_client.start_notify_calls == 1
     assert dummy_client.stop_notify_calls == 1
     assert dummy_client.disconnect_calls == 1
+
+
+def test_read_device_uses_valid_frame_when_notification_has_prefixed_junk(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, *_args, **_kwargs):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+            payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34])
+            crc_low, crc_high = modbus_crc(payload)
+            self._notify_handler(
+                None,
+                b"\x99\x88" + payload + bytes([crc_low, crc_high]),
+            )
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(commands={"test_device": {"status": (3, 0x0000, 1)}})
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="test_device")
+    parsed_frames: list[bytes] = []
+
+    def _update_parsed_data(
+        raw_data: bytes, register: int, cmd_name: str = "unknown"
+    ) -> bool:
+        _ = register, cmd_name
+        parsed_frames.append(raw_data)
+        return True
+
+    monkeypatch.setattr(device, "update_parsed_data", _update_parsed_data)
+
+    result = asyncio.run(client.read_device(device))
+    payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34])
+    crc_low, crc_high = modbus_crc(payload)
+    valid_frame = payload + bytes([crc_low, crc_high])
+
+    assert result.success is True
+    assert parsed_frames == [valid_frame]
 
 
 def test_persistent_session_reuses_connection_for_writes(monkeypatch):
