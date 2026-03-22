@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## [2.2.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.1...v2.2.2) (2026-03-22)
+
+
+### Bug Fixes
+
+* rewrite inverter read flow ([#66](https://github.com/IAmTheMitchell/renogy-ble/issues/66)) ([f53ba42](https://github.com/IAmTheMitchell/renogy-ble/commit/f53ba42d8b93f5c84b706bd39ebf77ab3b590111))
+* validate CRC on Modbus read responses to prevent corrupt sensor values ([#72](https://github.com/IAmTheMitchell/renogy-ble/issues/72)) ([4f867a5](https://github.com/IAmTheMitchell/renogy-ble/commit/4f867a5d6363a2c61e4f072e88eadd13e53487b9))
+* validate Modbus read frames before parsing ([#73](https://github.com/IAmTheMitchell/renogy-ble/issues/73)) ([174b591](https://github.com/IAmTheMitchell/renogy-ble/commit/174b591850a25313f0f764b2ac29e365b87e634a))
+
 ## [2.2.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.0...v2.2.1) (2026-03-20)
 
 
