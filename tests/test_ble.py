@@ -388,3 +388,99 @@ def test_write_single_register_cleans_up_when_notify_setup_raises_runtime_error(
     assert str(result.error) == "notify setup failed"
     assert dummy_client.stop_notify_calls == 0
     assert dummy_client.disconnect_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# CRC validation on read responses
+# ---------------------------------------------------------------------------
+
+
+def _make_read_frame(data_bytes: bytes) -> bytes:
+    """Build a well-formed Modbus read-response frame with a correct CRC.
+
+    Frame layout: [device_id, func_code, byte_count, <data_bytes>, crc_low, crc_high]
+    """
+    header = bytes([DEFAULT_DEVICE_ID, 0x03, len(data_bytes)])
+    payload = header + data_bytes
+    crc_low, crc_high = modbus_crc(payload)
+    return payload + bytes([crc_low, crc_high])
+
+
+def test_update_parsed_data_accepts_valid_crc(monkeypatch):
+    """A frame whose CRC matches its content must be parsed and accepted."""
+    frame = _make_read_frame(bytes([0x00, 0x50, 0x00, 0x00]))
+
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(
+        ble_module.RenogyParser,
+        "parse",
+        lambda *_args, **_kwargs: {"battery_voltage": 12.5},
+    )
+
+    result = device.update_parsed_data(frame, register=256, cmd_name="status")
+
+    assert result is True
+    assert device.parsed_data.get("battery_voltage") == 12.5
+
+
+def test_update_parsed_data_rejects_corrupted_crc(monkeypatch):
+    """A frame with a bad CRC must be rejected before the parser is ever called."""
+    frame = _make_read_frame(bytes([0x00, 0x50, 0x00, 0x00]))
+
+    # Flip the low CRC byte to produce a mismatch.
+    bad_frame = frame[:-2] + bytes([frame[-2] ^ 0xFF, frame[-1]])
+
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+
+    from renogy_ble import ble as ble_module
+
+    parse_called = []
+    monkeypatch.setattr(
+        ble_module.RenogyParser,
+        "parse",
+        lambda *_args, **_kwargs: (
+            parse_called.append(True) or {"battery_voltage": 99999.0}
+        ),
+    )
+
+    result = device.update_parsed_data(bad_frame, register=256, cmd_name="status")
+
+    assert result is False
+    assert parse_called == [], "Parser must not be called when CRC is invalid"
+    assert "battery_voltage" not in device.parsed_data
+
+
+def test_update_parsed_data_rejects_bit_flipped_payload(monkeypatch):
+    """A bit-flip anywhere in the data bytes must be caught by the CRC check.
+
+    This simulates the real-world scenario where BLE corruption turns a normal
+    voltage register value into a kilovolt-range reading.
+    """
+    # 0x00 0x50 encodes 8.0 V (scale 0.1); 0xFF 0xFF would encode 6553.5 V.
+    frame = _make_read_frame(bytes([0x00, 0x50, 0x00, 0x00]))
+
+    # Flip the first data byte — the original CRC is now wrong.
+    corrupted = bytearray(frame)
+    corrupted[3] = 0xFF
+    bad_frame = bytes(corrupted)
+
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+    device.parsed_data["battery_voltage"] = 13.0  # pre-existing valid reading
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(
+        ble_module.RenogyParser,
+        "parse",
+        # What the parser would return if corruption were not caught.
+        lambda *_args, **_kwargs: {"battery_voltage": 6553.5},
+    )
+
+    result = device.update_parsed_data(bad_frame, register=256, cmd_name="status")
+
+    assert result is False
+    # The pre-existing valid reading must be preserved, not overwritten with garbage.
+    assert device.parsed_data.get("battery_voltage") == 13.0

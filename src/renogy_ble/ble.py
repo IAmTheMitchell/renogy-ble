@@ -284,6 +284,22 @@ class RenogyBLEDevice:
                 )
                 return False
 
+            # Validate the CRC of the read response. The CRC covers all bytes
+            # except the final two, which carry the low and high CRC bytes.
+            payload_len = 3 + byte_count
+            crc_low, crc_high = modbus_crc(raw_data[:payload_len])
+            if raw_data[payload_len : payload_len + 2] != bytes([crc_low, crc_high]):
+                logger.warning(
+                    "CRC mismatch for %s (register %s): expected %02x %02x, got %s. "
+                    "Discarding frame to avoid corrupt sensor values.",
+                    cmd_name,
+                    register,
+                    crc_low,
+                    crc_high,
+                    raw_data[payload_len : payload_len + 2].hex(),
+                )
+                return False
+
             parsed = RenogyParser.parse(raw_data, self.device_type, register)
 
             if not parsed:
