@@ -84,6 +84,25 @@ def test_extract_valid_read_response_rejects_invalid_crc():
     assert response is None
 
 
+def test_extract_valid_read_response_prefers_latest_matching_frame():
+    client = RenogyBleClient()
+    stale_payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34])
+    stale_crc_low, stale_crc_high = modbus_crc(stale_payload)
+    stale_frame = stale_payload + bytes([stale_crc_low, stale_crc_high])
+
+    latest_payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x56, 0x78])
+    latest_crc_low, latest_crc_high = modbus_crc(latest_payload)
+    latest_frame = latest_payload + bytes([latest_crc_low, latest_crc_high])
+
+    response = client._extract_valid_read_response(
+        b"\x99\x88" + stale_frame + latest_frame,
+        function_code=0x03,
+        word_count=1,
+    )
+
+    assert response == latest_frame
+
+
 def test_clean_device_name_strips_whitespace():
     assert clean_device_name("  Renogy  BLE\t") == "Renogy BLE"
     assert clean_device_name("") == ""

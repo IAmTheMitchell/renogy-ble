@@ -775,7 +775,7 @@ class RenogyBleClient:
         function_code: int,
         word_count: int,
     ) -> bytes | None:
-        """Return the first valid Modbus read frame from buffered notifications."""
+        """Return the latest valid Modbus read frame from buffered notifications."""
         expected_payload_bytes = word_count * 2
         expected_len = 3 + expected_payload_bytes + 2
         max_offset = len(notification_data) - expected_len
@@ -783,6 +783,7 @@ class RenogyBleClient:
         if max_offset < 0:
             return None
 
+        latest_candidate: bytes | None = None
         for offset in range(max_offset + 1):
             candidate = bytes(notification_data[offset : offset + expected_len])
             if candidate[0] != self._device_id or candidate[1] != function_code:
@@ -794,9 +795,9 @@ class RenogyBleClient:
             if candidate[-2:] != bytes([crc_low, crc_high]):
                 continue
 
-            return candidate
+            latest_candidate = candidate
 
-        return None
+        return latest_candidate
 
     async def _wait_for_notification_bytes(
         self,
