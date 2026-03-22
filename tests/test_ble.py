@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
+    INVERTER_DEVICE_ID,
     UNAVAILABLE_RETRY_INTERVAL,
     BleakError,
     RenogyBleClient,
@@ -25,6 +26,25 @@ def _mock_ble_device(name="BT-TH-TEST", address="AA:BB:CC:DD:EE:FF"):
     device.address = address
     device.rssi = -60
     return device
+
+
+def _modbus_read_response(device_id: int, register_values: list[int]) -> bytes:
+    payload = bytearray([device_id, 0x03, len(register_values) * 2])
+    for value in register_values:
+        payload.extend(value.to_bytes(2, "big"))
+    crc_low, crc_high = modbus_crc(payload)
+    payload.extend([crc_low, crc_high])
+    return bytes(payload)
+
+
+def _modbus_ascii_response(device_id: int, value: str, register_count: int) -> bytes:
+    encoded = value.encode("ascii")
+    payload_bytes = encoded.ljust(register_count * 2, b"\x00")
+    payload = bytearray([device_id, 0x03, len(payload_bytes)])
+    payload.extend(payload_bytes)
+    crc_low, crc_high = modbus_crc(payload)
+    payload.extend([crc_low, crc_high])
+    return bytes(payload)
 
 
 def test_modbus_crc_known_vector():
@@ -231,6 +251,182 @@ def test_read_device_shunt300_reports_error_when_shunt_module_missing(monkeypatc
 
     assert result.success is False
     assert isinstance(result.error, ImportError)
+
+
+def test_read_device_reads_inverter_data_with_validated_frames(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+            self.writes: list[bytes] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            request = bytes(payload)
+            self.writes.append(request)
+            register = int.from_bytes(request[2:4], "big")
+            responses = {
+                4000: _modbus_read_response(
+                    INVERTER_DEVICE_ID,
+                    [2300, 125, 2295, 250, 6000, 401, 255, 0, 0, 5995] + ([0] * 22),
+                ),
+                4408: _modbus_read_response(
+                    INVERTER_DEVICE_ID, [175, 500, 550, 0, 0, 0]
+                ),
+                4109: _modbus_read_response(INVERTER_DEVICE_ID, [32]),
+                4311: _modbus_ascii_response(INVERTER_DEVICE_ID, "RIV1220PU-126", 8),
+            }
+            response = responses[register]
+            wrong_device = response.replace(
+                bytes([INVERTER_DEVICE_ID]),
+                bytes([DEFAULT_DEVICE_ID]),
+                1,
+            )
+            self._notify_handler(None, wrong_device + response)
+
+        async def read_gatt_char(self, *_args, **_kwargs):
+            return b"\x00"
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRIU123456"), device_type="inverter"
+    )
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data == {
+        "ac_input_voltage": 230.0,
+        "ac_input_current": 1.25,
+        "ac_output_voltage": 229.5,
+        "ac_output_current": 2.5,
+        "ac_output_frequency": 60.0,
+        "battery_voltage": 40.1,
+        "temperature": 25.5,
+        "input_frequency": 59.95,
+        "load_current": 1.75,
+        "load_active_power": 500,
+        "load_apparent_power": 550,
+        "device_id": 32,
+        "model": "RIV1220PU-126",
+    }
+    assert [request[0] for request in dummy_client.writes] == [INVERTER_DEVICE_ID] * 4
+    assert dummy_client.stop_notify_calls == 1
+    assert dummy_client.disconnect_calls == 1
+
+
+def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
+    monkeypatch,
+):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.start_notify_calls = 0
+            self.stop_notify_calls = 0
+            self.read_gatt_char_calls = 0
+            self.writes: list[bytes] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self.start_notify_calls += 1
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            request = bytes(payload)
+            self.writes.append(request)
+            register = int.from_bytes(request[2:4], "big")
+            responses = {
+                4000: _modbus_read_response(
+                    INVERTER_DEVICE_ID,
+                    [2300, 100, 2290, 200, 6000, 402, 260, 0, 0, 6000] + ([0] * 22),
+                ),
+                4408: _modbus_read_response(
+                    INVERTER_DEVICE_ID, [150, 450, 475, 0, 0, 0]
+                ),
+            }
+            self._notify_handler(None, responses[register])
+
+        async def read_gatt_char(self, *_args, **_kwargs):
+            self.read_gatt_char_calls += 1
+            return b"\x00"
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+    establish_calls = 0
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        nonlocal establish_calls
+        establish_calls += 1
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(transport_mode="persistent_session")
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRIU123456"), device_type="inverter"
+    )
+    device.parsed_data = {"device_id": 32, "model": "RIV1220PU-126"}
+
+    async def _run() -> tuple[dict[str, object], dict[str, object]]:
+        first = await client.read_device(device)
+        second = await client.read_device(device)
+        await client.close_device(device)
+        return first.parsed_data, second.parsed_data
+
+    first_data, second_data = asyncio.run(_run())
+
+    assert establish_calls == 1
+    assert dummy_client.start_notify_calls == 1
+    assert dummy_client.stop_notify_calls == 1
+    assert dummy_client.disconnect_calls == 1
+    assert dummy_client.read_gatt_char_calls == 2
+    assert [int.from_bytes(request[2:4], "big") for request in dummy_client.writes] == [
+        4000,
+        4408,
+        4000,
+        4408,
+    ]
+    assert first_data["device_id"] == 32
+    assert first_data["model"] == "RIV1220PU-126"
+    assert second_data["device_id"] == 32
+    assert second_data["model"] == "RIV1220PU-126"
 
 
 def test_persistent_session_reuses_connection_for_reads(monkeypatch):

@@ -30,6 +30,7 @@ MAX_NOTIFICATION_WAIT_TIME = 2.0
 
 # Default device ID for Renogy devices
 DEFAULT_DEVICE_ID = 0xFF
+INVERTER_DEVICE_ID = 0x20
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
@@ -39,6 +40,12 @@ DEFAULT_TRANSPORT_MODE = "per_operation"
 
 # Controller register for DC load control
 LOAD_CONTROL_REGISTER = 0x010A
+
+# Inverter-specific BLE setup
+INVERTER_INIT_CHAR_UUID = "0000ffd4-0000-1000-8000-00805f9b34fb"
+INVERTER_INIT_DELAY = 1.0
+INVERTER_INTER_COMMAND_DELAY = 0.3
+INVERTER_COMMAND_TIMEOUT = 10.0
 
 # Modbus commands for requesting data
 # Format: (function_code, start_register, word_count)
@@ -358,6 +365,17 @@ class RenogyBleWriteResult:
 TransportMode = Literal["per_operation", "persistent_session"]
 
 
+@dataclass(frozen=True, slots=True)
+class _InverterReadSpec:
+    """Describe one validated inverter Modbus read."""
+
+    register: int
+    word_count: int
+    parser_name: str
+    retries: int = 1
+    cache_key: str | None = None
+
+
 @dataclass(slots=True)
 class _PersistentBleSession:
     """Track a persistent BLE connection for a single device."""
@@ -417,6 +435,9 @@ class RenogyBleClient:
                 max_attempts=self._max_attempts,
             )
             return await shunt_client.read_device(device)
+
+        if device.device_type == "inverter":
+            return await self._read_inverter_device(device)
 
         commands = self._commands.get(device.device_type)
         if not commands:
@@ -533,6 +554,258 @@ class RenogyBleClient:
             return RenogyBleReadResult(
                 any_command_succeeded, dict(device.parsed_data), error
             )
+
+    async def _read_inverter_device(
+        self, device: RenogyBLEDevice
+    ) -> RenogyBleReadResult:
+        """Read inverter data using the validated session transport."""
+        session = await self._prepare_session(device)
+        cached_data = dict(device.parsed_data)
+
+        async with session.lock:
+            try:
+                await self._ensure_session_ready(device, session)
+            except Exception as connection_error:
+                logger.info(
+                    "Failed to prepare BLE session for inverter %s: %s",
+                    device.name,
+                    str(connection_error),
+                )
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+                return RenogyBleReadResult(
+                    False, dict(device.parsed_data), connection_error
+                )
+
+            any_command_succeeded = False
+            error: Exception | None = None
+
+            try:
+                logger.debug("Connected to inverter %s", device.name)
+                if session.client is None:
+                    raise RuntimeError("BLE session is not connected")
+
+                await asyncio.sleep(INVERTER_INIT_DELAY)
+
+                try:
+                    await session.client.read_gatt_char(INVERTER_INIT_CHAR_UUID)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Inverter init read failed for %s: %s", device.name, exc
+                    )
+
+                parsed_updates: dict[str, Any] = {}
+                read_specs = (
+                    _InverterReadSpec(
+                        4000, 32, "_parse_inverter_main_response", retries=2
+                    ),
+                    _InverterReadSpec(4408, 6, "_parse_inverter_load_response"),
+                    _InverterReadSpec(
+                        4109,
+                        1,
+                        "_parse_inverter_device_id_response",
+                        cache_key="device_id",
+                    ),
+                    _InverterReadSpec(
+                        4311,
+                        8,
+                        "_parse_inverter_model_response",
+                        cache_key="model",
+                    ),
+                )
+
+                for index, spec in enumerate(read_specs):
+                    if index > 0:
+                        await asyncio.sleep(INVERTER_INTER_COMMAND_DELAY)
+
+                    if spec.cache_key is not None and spec.cache_key in cached_data:
+                        parsed_updates[spec.cache_key] = cached_data[spec.cache_key]
+                        continue
+
+                    result_data = await self._read_modbus_register(
+                        session,
+                        device_id=INVERTER_DEVICE_ID,
+                        function_code=0x03,
+                        register=spec.register,
+                        word_count=spec.word_count,
+                        cmd_name=f"inverter register {spec.register}",
+                        device_name=device.name,
+                        timeout=INVERTER_COMMAND_TIMEOUT,
+                        retries=spec.retries,
+                    )
+                    if result_data is None:
+                        continue
+
+                    parser = getattr(self, spec.parser_name)
+                    parsed = parser(result_data)
+                    if not parsed:
+                        logger.info(
+                            "Failed to parse inverter register %s from device %s",
+                            spec.register,
+                            device.name,
+                        )
+                        continue
+
+                    parsed_updates.update(parsed)
+                    any_command_succeeded = True
+
+                if parsed_updates:
+                    device.parsed_data.update(parsed_updates)
+
+                if not any_command_succeeded:
+                    error = RuntimeError("No inverter commands completed successfully")
+            except BleakError as exc:
+                logger.info("BLE error with inverter %s: %s", device.name, str(exc))
+                error = exc
+            except Exception as exc:
+                logger.error(
+                    "Error reading inverter data from device %s: %s",
+                    device.name,
+                    str(exc),
+                )
+                error = exc
+
+            if error is not None:
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+            elif self._transport_mode != "persistent_session":
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=False,
+                )
+
+            return RenogyBleReadResult(
+                any_command_succeeded, dict(device.parsed_data), error
+            )
+
+    async def _read_modbus_register(
+        self,
+        session: _PersistentBleSession,
+        *,
+        device_id: int,
+        function_code: int,
+        register: int,
+        word_count: int,
+        cmd_name: str,
+        device_name: str,
+        timeout: float,
+        retries: int = 1,
+    ) -> bytes | None:
+        """Send a validated Modbus read request and return its response."""
+        request = create_modbus_read_request(
+            device_id,
+            function_code,
+            register,
+            word_count,
+        )
+
+        for attempt in range(retries):
+            self._reset_notifications(session)
+            if session.client is None:
+                raise RuntimeError("BLE session is not connected")
+            await session.client.write_gatt_char(self._write_char_uuid, request)
+
+            try:
+                return await self._wait_for_valid_read_response(
+                    session,
+                    function_code=function_code,
+                    word_count=word_count,
+                    cmd_name=cmd_name,
+                    device_name=device_name,
+                    expected_device_id=device_id,
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                if attempt < retries - 1:
+                    logger.debug(
+                        "Timeout waiting for %s from device %s. Retrying (%s/%s).",
+                        cmd_name,
+                        device_name,
+                        attempt + 2,
+                        retries,
+                    )
+                    continue
+
+        return None
+
+    @staticmethod
+    def _parse_inverter_main_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4000."""
+        if len(data) < 5:
+            logger.warning("Inverter response too short: %d bytes", len(data))
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 10:
+            logger.warning("Not enough inverter register values: %d", len(values))
+            return {}
+
+        return {
+            "ac_input_voltage": values[0] * 0.1,
+            "ac_input_current": values[1] * 0.01,
+            "ac_output_voltage": values[2] * 0.1,
+            "ac_output_current": values[3] * 0.01,
+            "ac_output_frequency": values[4] * 0.01,
+            "battery_voltage": values[5] * 0.1,
+            "temperature": values[6] * 0.1,
+            "input_frequency": values[9] * 0.01,
+        }
+
+    @staticmethod
+    def _parse_inverter_load_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4408."""
+        if len(data) < 11:
+            logger.warning("Inverter load response too short: %d bytes", len(data))
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 3:
+            logger.warning("Not enough inverter load values: %d", len(values))
+            return {}
+
+        return {
+            "load_current": values[0] * 0.01,
+            "load_active_power": values[1],
+            "load_apparent_power": values[2],
+        }
+
+    @staticmethod
+    def _parse_inverter_device_id_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4109."""
+        if len(data) < 7:
+            logger.warning("Inverter device id response too short: %d bytes", len(data))
+            return {}
+
+        return {"device_id": int.from_bytes(data[3:5], "big")}
+
+    @staticmethod
+    def _parse_inverter_model_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4311."""
+        if len(data) < 21:
+            logger.warning("Inverter model response too short: %d bytes", len(data))
+            return {}
+
+        model = data[3:19].decode("ascii", errors="ignore").rstrip("\x00").strip()
+        if not model:
+            return {}
+
+        return {"model": model}
 
     async def write_single_register(
         self,
@@ -772,10 +1045,14 @@ class RenogyBleClient:
         self,
         notification_data: bytes | bytearray,
         *,
+        expected_device_id: int | None = None,
         function_code: int,
         word_count: int,
     ) -> bytes | None:
         """Return the latest valid Modbus read frame from buffered notifications."""
+        device_id = (
+            self._device_id if expected_device_id is None else expected_device_id
+        )
         expected_payload_bytes = word_count * 2
         expected_len = 3 + expected_payload_bytes + 2
         max_offset = len(notification_data) - expected_len
@@ -786,7 +1063,7 @@ class RenogyBleClient:
         latest_candidate: bytes | None = None
         for offset in range(max_offset + 1):
             candidate = bytes(notification_data[offset : offset + expected_len])
-            if candidate[0] != self._device_id or candidate[1] != function_code:
+            if candidate[0] != device_id or candidate[1] != function_code:
                 continue
             if candidate[2] != expected_payload_bytes:
                 continue
@@ -829,27 +1106,29 @@ class RenogyBleClient:
         self,
         session: _PersistentBleSession,
         *,
+        expected_device_id: int | None = None,
         function_code: int,
         word_count: int,
         cmd_name: str,
         device_name: str,
+        timeout: float | None = None,
     ) -> bytes:
         """Wait for a valid Modbus read frame in buffered notifications."""
         expected_len = 3 + word_count * 2 + 2
         start_time = asyncio.get_running_loop().time()
+        max_wait = self._max_notification_wait_time if timeout is None else timeout
 
         while True:
             response = self._extract_valid_read_response(
                 session.notification_data,
+                expected_device_id=expected_device_id,
                 function_code=function_code,
                 word_count=word_count,
             )
             if response is not None:
                 return response
 
-            remaining = self._max_notification_wait_time - (
-                asyncio.get_running_loop().time() - start_time
-            )
+            remaining = max_wait - (asyncio.get_running_loop().time() - start_time)
             if remaining <= 0:
                 logger.info(
                     "Timeout – no valid %s frame after %s bytes from device %s",
