@@ -9,18 +9,18 @@ and parsing their Modbus responses.
 ## Overview
 
 Library for communicating with Renogy devices over BLE using BT-1 and BT-2
-Bluetooth modules for controller-style devices, plus direct BLE notifications
-from Smart Shunt 300 devices.
+Bluetooth modules for controller-style devices, plus direct BLE communication
+for Renogy inverters and Smart Shunt 300 devices.
 
 Currently supported devices:
 
 - Renogy charge controllers (such as Rover, Wanderer, Adventurer)
+- Renogy inverters
 - Renogy Smart Shunt 300
 
 Future planned support:
 
 - Renogy batteries
-- Renogy inverters
 
 ## Installation
 
@@ -95,6 +95,34 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Inverter Reads
+
+Inverters use a dedicated BLE read flow. `device_type="inverter"` triggers the
+inverter-specific transport and parser path automatically.
+
+```python
+import asyncio
+
+from bleak import BleakScanner
+
+from renogy_ble import RenogyBLEDevice, RenogyBleClient
+
+
+async def main() -> None:
+    devices = await BleakScanner.discover()
+    ble_device = next(
+        device for device in devices if (device.name or "").startswith("RNGRIU")
+    )
+
+    renogy_device = RenogyBLEDevice(ble_device, device_type="inverter")
+    result = await RenogyBleClient().read_device(renogy_device)
+    print(result.parsed_data)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
 ### Smart Shunt 300 Reads
 
 Smart Shunt 300 devices do not use the same Modbus command flow as Renogy
@@ -158,10 +186,11 @@ client = RenogyBleClient(device_id=0xFF, commands=custom_commands)
 ## Features
 
 - Connects to Renogy BLE devices and reads Modbus registers
+- Connects to Renogy inverter devices and reads inverter-specific Modbus registers
 - Connects to Renogy Smart Shunt 300 devices and parses BLE notifications
 - Builds Modbus read requests with CRC framing
 - Parses raw BLE Modbus responses from Renogy devices
-- Extracts information about battery, solar input, load output, controller status, and energy statistics
+- Extracts information about battery, solar input, load output, inverter status, controller status, and energy statistics
 - Returns data in a flat dictionary structure
 - Applies scaling and mapping based on the register definitions
 
