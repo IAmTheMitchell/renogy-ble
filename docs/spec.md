@@ -1,24 +1,30 @@
-# Renogy BLE Data Parsing Library - Developer Specification
+# Renogy BLE Library - Developer Specification
 
 ## **Overview**
-This document outlines the design, requirements, and implementation details for a Python library that parses raw BLE data from **Renogy charge controllers** using **BT-1 and BT-2** Bluetooth modules. The library will be standalone and **only responsible for parsing data**. A future **Home Assistant integration** will handle BLE communication and data retrieval.
+This document outlines the design, requirements, and implementation details for
+a standalone Python library that communicates with Renogy devices over BLE,
+builds and validates Modbus requests, and parses the returned data. The library
+supports controller-style devices using BT-1 and BT-2 modules, dedicated
+inverter BLE flows, and direct Smart Shunt 300 BLE notifications. Home
+Assistant-specific lifecycle and entity behavior remain out of scope.
 
 ---
 
 ## **1. Functional Requirements**
 
 ### **1.1 Supported Devices**
-- Initially supports **Renogy Rover charge controllers**.
-- Future support for Wanderer, Adventurer, and other charge controllers using BT-1 and BT-2.
+- Supports **Renogy charge controllers** using BT-1 and BT-2 modules.
+- Supports **Renogy DC-DC chargers** that share the controller-style Modbus flow.
+- Supports **Renogy inverters** using the inverter-specific BLE transport.
+- Supports **Renogy Smart Shunt 300** devices via direct BLE notifications.
 
 ### **1.2 Features**
-- Parses **raw BLE Modbus data** from Renogy charge controllers.
-- Extracts **battery, solar input, load output, controller status, and energy stats**.
+- Connects to supported Renogy BLE devices and reads their telemetry.
+- Parses **raw BLE Modbus data** from controller-style devices and inverters.
+- Extracts **battery, solar input, load output, controller status, inverter status, and energy stats**.
 - Uses a **flat dictionary structure** (e.g., `{ "battery_voltage": 129, "pv_power": 250 }`).
-- Supports **configurable byte order** for registers.
-- Returns **raw values** (no scaling or unit conversion).
-- No data validation—unexpected values are returned as-is.
-- Logs warnings for **unexpected data lengths** but attempts partial parsing.
+- Applies device-specific scaling and mapping where required.
+- Validates Modbus framing and logs warnings for **unexpected data lengths** while attempting partial parsing where possible.
 
 ---
 
@@ -28,11 +34,13 @@ This document outlines the design, requirements, and implementation details for 
 ```
 renogy_ble/
   ├── __init__.py         # Entry point
+  ├── ble.py              # BLE transport and read flows
   ├── parser.py           # Main parser logic
   ├── register_map.py     # Register definitions for each model
-  ├── setup.py            # Packaging metadata
+  ├── shunt.py            # Smart Shunt 300 BLE client
   ├── pyproject.toml      # Build system support
   └── tests/
+      ├── test_ble.py     # Unit tests for BLE transport and parsing integration
       ├── test_parser.py  # Unit tests for parsing logic
 ```
 
@@ -65,8 +73,9 @@ renogy_ble/
 - Extends `RenogyBaseParser`.
 - Implements **Rover-specific parsing logic**.
 
-#### **4️⃣ `RenogyParser` (Entry Point)**
-- Routes data to the correct model parser.
+#### **4️⃣ `RenogyBleClient` and `RenogyParser` (Entry Points)**
+- `RenogyBleClient` handles BLE communication, Modbus framing, and device-specific read flows.
+- `RenogyParser` routes raw data to the correct model parser when BLE I/O is handled externally.
 - API:
   ```python
   from renogy_ble import RenogyParser
@@ -80,18 +89,18 @@ renogy_ble/
 ## **3. Data Handling**
 
 ### **3.1 Input Format**
-- Accepts **raw BLE Modbus response bytes**.
-- User must specify the **device model** (e.g., `model="rover"`).
+- Accepts **raw BLE Modbus response bytes** when parsing existing frames.
+- Supports full end-to-end BLE reads when the caller provides a discovered BLE device plus a supported `device_type`.
 
 ### **3.2 Output Format**
-- Returns a **flat dictionary** of raw values, e.g.:
+- Returns a **flat dictionary** of parsed values, e.g.:
   ```python
   {
-      "battery_voltage": 129,
+      "battery_voltage": 12.9,
       "pv_power": 250,
-      "charging_status": 2
+      "charging_status": "mppt"
   }
-  ```
+```
 
 ### **3.3 Byte Order Handling**
 - Defined per **register** in `register_map.py`.
@@ -190,4 +199,3 @@ setup(
 
 ## **Final Notes**
 This library is designed for **Home Assistant integration** but can be used in any project that needs **raw Renogy BLE data parsing**. The architecture allows **easy expansion** to other models in the future.
-
