@@ -7,6 +7,13 @@ It supports different device models by routing the parsing to type-specific pars
 
 import logging
 
+from renogy_ble.battery import (
+    BATTERY_DEVICE_TYPE,
+    BATTERY_VARIANT_LEGACY,
+    BATTERY_VARIANT_PRO,
+    detect_battery_variant,
+    is_supported_battery_name,
+)
 from renogy_ble.ble import (
     COMMANDS,
     DEFAULT_DEVICE_ID,
@@ -46,6 +53,9 @@ logging.basicConfig(
 
 __all__ = [
     "COMMANDS",
+    "BATTERY_DEVICE_TYPE",
+    "BATTERY_VARIANT_LEGACY",
+    "BATTERY_VARIANT_PRO",
     "DEFAULT_DEVICE_ID",
     "DEFAULT_DEVICE_TYPE",
     "LOAD_CONTROL_REGISTER",
@@ -60,6 +70,8 @@ __all__ = [
     "clean_device_name",
     "create_modbus_read_request",
     "create_modbus_write_request",
+    "detect_battery_variant",
+    "is_supported_battery_name",
     "modbus_crc",
     "KEY_SHUNT_VOLTAGE",
     "KEY_SHUNT_CURRENT",
