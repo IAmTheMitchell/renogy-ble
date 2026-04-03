@@ -182,8 +182,9 @@ def parse_battery_cell_status(
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
+    # Cell voltage registers are reported in millivolts.
     cell_values = [
-        int.from_bytes(data[start : start + 2], byteorder="big") / 10
+        int.from_bytes(data[start : start + 2], byteorder="big") / 1000
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
     ]
     if cell_values:

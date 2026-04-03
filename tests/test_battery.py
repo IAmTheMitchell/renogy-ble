@@ -99,7 +99,7 @@ def test_parse_battery_cell_status_and_faults() -> None:
     """Cell and fault parsing should expose derived metrics."""
     payload = bytearray(68)
     payload[0:2] = (4).to_bytes(2, "big")
-    for index, value in enumerate((330, 329, 331, 332)):
+    for index, value in enumerate((3300, 3290, 3310, 3320)):
         start = 2 + index * 2
         payload[start : start + 2] = value.to_bytes(2, "big")
     payload[34:36] = (2).to_bytes(2, "big")
@@ -110,10 +110,10 @@ def test_parse_battery_cell_status_and_faults() -> None:
     parsed_cells = parse_battery_cell_status(cell_frame, variant=BATTERY_VARIANT_LEGACY)
 
     assert parsed_cells["cell_count"] == 4
-    assert parsed_cells["cell_voltages"] == [33.0, 32.9, 33.1, 33.2]
-    assert parsed_cells["cell_voltage_min"] == 32.9
-    assert parsed_cells["cell_voltage_max"] == 33.2
-    assert parsed_cells["cell_voltage_delta"] == 0.3
+    assert parsed_cells["cell_voltages"] == [3.3, 3.29, 3.31, 3.32]
+    assert parsed_cells["cell_voltage_min"] == 3.29
+    assert parsed_cells["cell_voltage_max"] == 3.32
+    assert parsed_cells["cell_voltage_delta"] == 0.03
     assert parsed_cells["battery_temperature"] == 22.0
 
     fault_payload = bytearray(16)
