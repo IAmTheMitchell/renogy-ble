@@ -14,6 +14,19 @@ from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
+from renogy_ble.battery import (
+    BATTERY_COMMANDS,
+    BATTERY_DEFAULT_MODELS,
+    BATTERY_DEVICE_TYPE,
+    BATTERY_PROTOCOL_DEVICE_IDS,
+    BatteryVariant,
+    build_battery_command,
+    detect_battery_variant,
+    parse_battery_cell_status,
+    parse_battery_device_info,
+    parse_battery_mosfet_status,
+    parse_battery_pack_status,
+)
 from renogy_ble.renogy_parser import RenogyParser
 
 logger = logging.getLogger(__name__)
@@ -151,6 +164,27 @@ def clean_device_name(name: str | None) -> str:
     return ""
 
 
+def extract_manufacturer_data(
+    ble_device: BLEDevice,
+    manufacturer_data: dict[int, bytes] | None = None,
+) -> dict[int, bytes]:
+    """Return advertisement manufacturer data stored on the BLE device."""
+    if manufacturer_data is not None:
+        return dict(manufacturer_data)
+
+    direct_data = getattr(ble_device, "manufacturer_data", None)
+    if isinstance(direct_data, dict):
+        return dict(direct_data)
+
+    details = getattr(ble_device, "details", None)
+    if isinstance(details, dict):
+        details_data = details.get("manufacturer_data")
+        if isinstance(details_data, dict):
+            return dict(details_data)
+
+    return {}
+
+
 class RenogyBLEDevice:
     """Representation of a Renogy BLE device."""
 
@@ -159,6 +193,7 @@ class RenogyBLEDevice:
         ble_device: BLEDevice,
         advertisement_rssi: Optional[int] = None,
         device_type: str = DEFAULT_DEVICE_TYPE,
+        manufacturer_data: dict[int, bytes] | None = None,
     ):
         """Initialize the Renogy BLE device."""
         self.ble_device = ble_device
@@ -169,6 +204,9 @@ class RenogyBLEDevice:
 
         # Use the provided advertisement RSSI if available, otherwise set to None.
         self.rssi = advertisement_rssi
+        self.manufacturer_data = extract_manufacturer_data(
+            ble_device, manufacturer_data
+        )
         self.last_seen = datetime.now()
         self.data: Optional[dict[str, Any]] = None
         self.failure_count = 0
@@ -177,6 +215,11 @@ class RenogyBLEDevice:
         self.parsed_data: dict[str, Any] = {}
         self.device_type = device_type
         self.last_unavailable_time: Optional[datetime] = None
+        self.battery_variant: BatteryVariant | None = (
+            detect_battery_variant(self.name, manufacturer_data=self.manufacturer_data)
+            if device_type == BATTERY_DEVICE_TYPE
+            else None
+        )
 
     @property
     def is_available(self) -> bool:
@@ -419,6 +462,9 @@ class RenogyBleClient:
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect to a device, fetch data, and return parsed results."""
+        if device.device_type == BATTERY_DEVICE_TYPE:
+            return await self._read_battery_device(device)
+
         if device.device_type == "shunt300":
             try:
                 from renogy_ble.shunt import ShuntBleClient
@@ -533,6 +579,138 @@ class RenogyBleClient:
             except Exception as exc:
                 logger.error(
                     "Error reading data from device %s: %s", device.name, str(exc)
+                )
+                error = exc
+
+            if error is not None:
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+            elif self._transport_mode != "persistent_session":
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=False,
+                )
+
+            return RenogyBleReadResult(
+                any_command_succeeded, dict(device.parsed_data), error
+            )
+
+    async def _read_battery_device(
+        self, device: RenogyBLEDevice
+    ) -> RenogyBleReadResult:
+        """Read data from a supported Renogy battery."""
+        session = await self._prepare_session(device)
+        cached_data = dict(device.parsed_data)
+        variant = device.battery_variant or detect_battery_variant(
+            device.name,
+            manufacturer_data=device.manufacturer_data,
+        )
+        stable_data: dict[str, Any] = {
+            key: cached_data[key]
+            for key in ("serial_number", "device_name", "sw_version")
+            if key in cached_data
+        }
+        if variant is not None:
+            stable_data["battery_variant"] = variant
+            stable_data["model"] = cached_data.get(
+                "model", BATTERY_DEFAULT_MODELS[variant]
+            )
+
+        # Battery reads should not return stale telemetry from the previous poll.
+        device.parsed_data.clear()
+        device.parsed_data.update(stable_data)
+
+        async with session.lock:
+            try:
+                await self._ensure_session_ready(device, session)
+            except Exception as connection_error:
+                logger.info(
+                    "Failed to prepare BLE session for battery %s: %s",
+                    device.name,
+                    str(connection_error),
+                )
+                await self._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
+                )
+                return RenogyBleReadResult(
+                    False, dict(device.parsed_data), connection_error
+                )
+
+            any_command_succeeded = False
+            error: Exception | None = None
+
+            try:
+                if variant is None:
+                    raise ValueError(
+                        f"Unable to determine Renogy battery variant for {device.name}"
+                    )
+
+                device.battery_variant = variant
+                # Battery polls should only expose telemetry refreshed during this read.
+                # Preserve stable metadata that can be reused across polls.
+                parsed_updates = dict(device.parsed_data)
+                device_id = BATTERY_PROTOCOL_DEVICE_IDS[variant]
+
+                for cmd_name, (register, word_count) in BATTERY_COMMANDS.items():
+                    self._reset_notifications(session)
+                    if session.client is None:
+                        raise RuntimeError("BLE session is not connected")
+
+                    request = build_battery_command(variant, register, word_count)
+                    await session.client.write_gatt_char(self._write_char_uuid, request)
+                    try:
+                        result_data = await self._wait_for_valid_read_response(
+                            session,
+                            expected_device_id=device_id,
+                            function_code=0x03,
+                            word_count=word_count,
+                            cmd_name=f"battery {cmd_name}",
+                            device_name=device.name,
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+
+                    parser = {
+                        "device_info": parse_battery_device_info,
+                        "pack_status": parse_battery_pack_status,
+                        "cell_status": parse_battery_cell_status,
+                        "mosfet_status": parse_battery_mosfet_status,
+                    }[cmd_name]
+                    parsed = parser(result_data, variant=variant)
+                    if not parsed:
+                        logger.info(
+                            "Failed to parse battery command %s from device %s",
+                            cmd_name,
+                            device.name,
+                        )
+                        continue
+
+                    parsed_updates.update(parsed)
+                    any_command_succeeded = True
+
+                if "device_name" in parsed_updates and parsed_updates["device_name"]:
+                    device.name = str(parsed_updates["device_name"])
+                device.parsed_data = parsed_updates
+
+                if not any_command_succeeded:
+                    error = RuntimeError("No battery commands completed successfully")
+            except BleakError as exc:
+                logger.info("BLE error with battery %s: %s", device.name, str(exc))
+                error = exc
+            except Exception as exc:
+                logger.error(
+                    "Error reading battery data from device %s: %s",
+                    device.name,
+                    str(exc),
                 )
                 error = exc
 
