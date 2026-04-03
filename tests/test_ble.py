@@ -531,6 +531,94 @@ def test_read_device_reads_battery_pro_data(monkeypatch):
     assert [request[0] for request in dummy_client.writes] == [0xFF] * 4
 
 
+def test_read_device_detects_battery_variant_from_manufacturer_data(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+            self.writes: list[bytes] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            request = bytes(payload)
+            self.writes.append(request)
+            register = int.from_bytes(request[2:4], "big")
+
+            def _frame(device_id: int, payload_bytes: bytes) -> bytes:
+                frame = bytearray([device_id, 0x03, len(payload_bytes)])
+                frame.extend(payload_bytes)
+                crc_low, crc_high = modbus_crc(frame)
+                frame.extend([crc_low, crc_high])
+                return bytes(frame)
+
+            info_payload = bytearray(56)
+            info_payload[12:28] = b"RENOGY-PRO-0002 "
+            info_payload[36:52] = b"Pro Battery     "
+            info_payload[52:56] = b"2.10"
+
+            pack_payload = bytearray(14)
+            pack_payload[0:2] = int(1234).to_bytes(2, "big", signed=True)
+            pack_payload[2:4] = (512).to_bytes(2, "big")
+            pack_payload[4:8] = (65000).to_bytes(4, "big")
+            pack_payload[8:12] = (100000).to_bytes(4, "big")
+            pack_payload[12:14] = (7).to_bytes(2, "big")
+
+            cell_payload = bytearray(68)
+            cell_payload[0:2] = (4).to_bytes(2, "big")
+            for index, value in enumerate((330, 330, 331, 331)):
+                start = 2 + index * 2
+                cell_payload[start : start + 2] = value.to_bytes(2, "big")
+            cell_payload[34:36] = (1).to_bytes(2, "big")
+            cell_payload[36:38] = (230).to_bytes(2, "big", signed=True)
+
+            mosfet_payload = bytearray(16)
+            mosfet_payload[13] = 0x02
+
+            responses = {
+                0x13F0: _frame(0xFF, bytes(info_payload)),
+                0x13B2: _frame(0xFF, bytes(pack_payload)),
+                0x1388: _frame(0xFF, bytes(cell_payload)),
+                0x13EC: _frame(0xFF, bytes(mosfet_payload)),
+            }
+            self._notify_handler(None, responses[register])
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="BT-BATTERY"),
+        device_type="battery",
+        manufacturer_data={0xE14C: b"\x01"},
+    )
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
+    assert [request[0] for request in dummy_client.writes] == [0xFF] * 4
+
+
 def test_read_device_battery_continues_after_command_timeout(monkeypatch):
     class DummyClient:
         def __init__(self):
@@ -625,6 +713,126 @@ def test_read_device_battery_continues_after_command_timeout(monkeypatch):
     assert len(dummy_client.writes) == 4
     assert dummy_client.stop_notify_calls == 1
     assert dummy_client.disconnect_calls == 1
+
+
+def test_read_device_battery_drops_stale_partial_poll_data(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.start_notify_calls = 0
+            self.stop_notify_calls = 0
+            self.writes: list[bytes] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self.start_notify_calls += 1
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            self.writes.append(bytes(payload))
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    def _battery_frame(device_id: int, payload_bytes: bytes) -> bytes:
+        frame = bytearray([device_id, 0x03, len(payload_bytes)])
+        frame.extend(payload_bytes)
+        crc_low, crc_high = modbus_crc(frame)
+        frame.extend([crc_low, crc_high])
+        return bytes(frame)
+
+    info_payload = bytearray(56)
+    info_payload[12:28] = b"RENOGY-BAT-0001 "
+    info_payload[36:52] = b"House Battery 1 "
+    info_payload[52:56] = b"1.02"
+
+    pack_payload = bytearray(14)
+    pack_payload[0:2] = int(1234).to_bytes(2, "big", signed=True)
+    pack_payload[2:4] = (512).to_bytes(2, "big")
+    pack_payload[4:8] = (50000).to_bytes(4, "big")
+    pack_payload[8:12] = (100000).to_bytes(4, "big")
+    pack_payload[12:14] = (42).to_bytes(2, "big")
+
+    cell_payload = bytearray(68)
+    cell_payload[0:2] = (4).to_bytes(2, "big")
+    for index, value in enumerate((330, 329, 331, 332)):
+        start = 2 + index * 2
+        cell_payload[start : start + 2] = value.to_bytes(2, "big")
+    cell_payload[34:36] = (2).to_bytes(2, "big")
+    cell_payload[36:38] = (215).to_bytes(2, "big", signed=True)
+    cell_payload[38:40] = (225).to_bytes(2, "big", signed=True)
+
+    mosfet_payload = bytearray(16)
+    mosfet_payload[13] = 0x16
+    mosfet_payload[14] = 0x20
+
+    responses = {
+        "battery device_info": _battery_frame(0x30, bytes(info_payload)),
+        "battery pack_status": _battery_frame(0x30, bytes(pack_payload)),
+        "battery cell_status": _battery_frame(0x30, bytes(cell_payload)),
+        "battery mosfet_status": _battery_frame(0x30, bytes(mosfet_payload)),
+    }
+
+    dummy_client = DummyClient()
+    poll_number = 0
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    async def _fake_wait_for_valid_read_response(
+        _session,
+        *,
+        cmd_name,
+        **_kwargs,
+    ):
+        if poll_number == 1 and cmd_name in {
+            "battery cell_status",
+            "battery mosfet_status",
+        }:
+            raise asyncio.TimeoutError()
+
+        return responses[cmd_name]
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(transport_mode="persistent_session")
+    monkeypatch.setattr(
+        client,
+        "_wait_for_valid_read_response",
+        _fake_wait_for_valid_read_response,
+    )
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="BT-TH-BATT01"), device_type="battery"
+    )
+
+    async def _run() -> tuple[dict[str, object], dict[str, object]]:
+        nonlocal poll_number
+        first = await client.read_device(device)
+        poll_number = 1
+        second = await client.read_device(device)
+        await client.close_device(device)
+        return first.parsed_data, second.parsed_data
+
+    first_data, second_data = asyncio.run(_run())
+
+    assert first_data["battery_temperature"] == 22.0
+    assert first_data["charge_mosfet_enabled"] is True
+    assert second_data["battery_voltage"] == 51.2
+    assert second_data["battery_current"] == 12.34
+    assert second_data["serial_number"] == "RENOGY-BAT-0001"
+    assert second_data["sw_version"] == "1.02"
+    assert "battery_temperature" not in second_data
+    assert "cell_count" not in second_data
+    assert "charge_mosfet_enabled" not in second_data
+    assert "discharge_mosfet_enabled" not in second_data
+    assert "heater_enabled" not in second_data
 
 
 def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
