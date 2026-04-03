@@ -95,6 +95,24 @@ def test_parse_battery_pack_status_variants() -> None:
     assert pro["battery_current"] == 123.4
 
 
+def test_parse_battery_pack_status_preserves_fractional_capacity() -> None:
+    """Battery pack status should preserve fractional amp-hour capacities."""
+    payload = bytearray(14)
+    payload[0:2] = int(250).to_bytes(2, "big", signed=True)
+    payload[2:4] = (512).to_bytes(2, "big")
+    payload[4:8] = (50000).to_bytes(4, "big")
+    payload[8:12] = (99500).to_bytes(4, "big")
+    payload[12:14] = (42).to_bytes(2, "big")
+
+    frame = _battery_frame(0x30, bytes(payload))
+
+    parsed = parse_battery_pack_status(frame, variant=BATTERY_VARIANT_LEGACY)
+
+    assert parsed["battery_remaining_capacity"] == 50.0
+    assert parsed["battery_capacity"] == 99.5
+    assert parsed["battery_percentage"] == 50.3
+
+
 def test_parse_battery_cell_status_and_faults() -> None:
     """Cell and fault parsing should expose derived metrics."""
     payload = bytearray(68)

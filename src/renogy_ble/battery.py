@@ -149,7 +149,7 @@ def parse_battery_pack_status(
         10 if variant == BATTERY_VARIANT_PRO else 100
     )
     battery_remaining_capacity = int.from_bytes(data[7:11], byteorder="big") / 1000
-    battery_capacity = int.from_bytes(data[11:15], byteorder="big") // 1000
+    battery_capacity = int.from_bytes(data[11:15], byteorder="big") / 1000
     battery_cycle_count = int.from_bytes(data[15:17], byteorder="big")
 
     parsed: dict[str, Any] = {
