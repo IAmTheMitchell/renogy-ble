@@ -12,6 +12,7 @@ BatteryVariant = Literal["legacy", "pro"]
 
 BATTERY_PRO_NAME_PREFIXES = ("RNGRBP", "RNGC")
 BATTERY_LEGACY_NAME_PREFIX = "BT-TH-"
+BATTERY_LEGACY_NAME_MARKERS = ("BATT", "BATTERY")
 BATTERY_PRO_MANUFACTURER_ID = 0xE14C
 
 BATTERY_PROTOCOL_DEVICE_IDS: dict[BatteryVariant, int] = {
@@ -53,15 +54,28 @@ def detect_battery_variant(
     if BATTERY_PRO_MANUFACTURER_ID in manufacturer_data:
         return BATTERY_VARIANT_PRO
 
-    if cleaned_name.startswith(BATTERY_LEGACY_NAME_PREFIX):
+    if _is_legacy_battery_name(cleaned_name):
         return BATTERY_VARIANT_LEGACY
 
     return None
 
 
-def is_supported_battery_name(name: str | None) -> bool:
-    """Return True when a BLE name matches a supported battery family."""
-    return detect_battery_variant(name) is not None
+def is_supported_battery_name(
+    name: str | None,
+    *,
+    manufacturer_data: dict[int, bytes] | None = None,
+) -> bool:
+    """Return True when an advertisement matches a supported battery family."""
+    return detect_battery_variant(name, manufacturer_data=manufacturer_data) is not None
+
+
+def _is_legacy_battery_name(name: str) -> bool:
+    """Return True only for legacy battery advertisements, not shared BT-TH devices."""
+    if not name.startswith(BATTERY_LEGACY_NAME_PREFIX):
+        return False
+
+    suffix = name[len(BATTERY_LEGACY_NAME_PREFIX) :].upper()
+    return any(marker in suffix for marker in BATTERY_LEGACY_NAME_MARKERS)
 
 
 @cache

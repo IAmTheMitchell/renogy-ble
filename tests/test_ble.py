@@ -835,6 +835,52 @@ def test_read_device_battery_drops_stale_partial_poll_data(monkeypatch):
     assert "heater_enabled" not in second_data
 
 
+def test_read_device_battery_clears_stale_telemetry_after_reconnect_failure(
+    monkeypatch,
+):
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = False
+            self.disconnect_calls = 0
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="BT-TH-BATT01"), device_type="battery"
+    )
+    device.parsed_data = {
+        "serial_number": "RENOGY-BAT-0001",
+        "sw_version": "1.02",
+        "battery_variant": BATTERY_VARIANT_LEGACY,
+        "model": "Renogy Bluetooth Battery",
+        "battery_voltage": 51.2,
+        "battery_current": 12.34,
+    }
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is False
+    assert result.error is not None
+    assert result.parsed_data == {
+        "serial_number": "RENOGY-BAT-0001",
+        "sw_version": "1.02",
+        "battery_variant": BATTERY_VARIANT_LEGACY,
+        "model": "Renogy Bluetooth Battery",
+    }
+    assert device.parsed_data == result.parsed_data
+
+
 def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
     monkeypatch,
 ):

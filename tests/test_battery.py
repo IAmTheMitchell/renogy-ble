@@ -5,6 +5,7 @@ from renogy_ble.battery import (
     BATTERY_VARIANT_PRO,
     build_battery_command,
     detect_battery_variant,
+    is_supported_battery_name,
     parse_battery_cell_status,
     parse_battery_device_info,
     parse_battery_mosfet_status,
@@ -29,12 +30,22 @@ def test_detect_battery_variant_from_name_and_manufacturer_data() -> None:
     """Battery detection should distinguish Pro and legacy families."""
     assert detect_battery_variant("RNGRBP123456") == BATTERY_VARIANT_PRO
     assert detect_battery_variant("RNGC123456") == BATTERY_VARIANT_PRO
-    assert detect_battery_variant("BT-TH-123456") == BATTERY_VARIANT_LEGACY
+    assert detect_battery_variant("BT-TH-BATT01") == BATTERY_VARIANT_LEGACY
+    assert detect_battery_variant("BT-TH-123456") is None
     assert (
         detect_battery_variant("Unknown", manufacturer_data={0xE14C: b"\x01"})
         == BATTERY_VARIANT_PRO
     )
     assert detect_battery_variant("Other") is None
+
+
+def test_is_supported_battery_name_accepts_manufacturer_data() -> None:
+    """The public battery helper should match the read-path detection inputs."""
+    assert is_supported_battery_name("BT-BATTERY") is False
+    assert (
+        is_supported_battery_name("BT-BATTERY", manufacturer_data={0xE14C: b"\x01"})
+        is True
+    )
 
 
 def test_build_battery_command_uses_variant_device_id() -> None:

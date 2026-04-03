@@ -607,6 +607,24 @@ class RenogyBleClient:
         """Read data from a supported Renogy battery."""
         session = await self._prepare_session(device)
         cached_data = dict(device.parsed_data)
+        variant = device.battery_variant or detect_battery_variant(
+            device.name,
+            manufacturer_data=device.manufacturer_data,
+        )
+        stable_data: dict[str, Any] = {
+            key: cached_data[key]
+            for key in ("serial_number", "device_name", "sw_version")
+            if key in cached_data
+        }
+        if variant is not None:
+            stable_data["battery_variant"] = variant
+            stable_data["model"] = cached_data.get(
+                "model", BATTERY_DEFAULT_MODELS[variant]
+            )
+
+        # Battery reads should not return stale telemetry from the previous poll.
+        device.parsed_data.clear()
+        device.parsed_data.update(stable_data)
 
         async with session.lock:
             try:
@@ -631,10 +649,6 @@ class RenogyBleClient:
             error: Exception | None = None
 
             try:
-                variant = device.battery_variant or detect_battery_variant(
-                    device.name,
-                    manufacturer_data=device.manufacturer_data,
-                )
                 if variant is None:
                     raise ValueError(
                         f"Unable to determine Renogy battery variant for {device.name}"
@@ -643,19 +657,7 @@ class RenogyBleClient:
                 device.battery_variant = variant
                 # Battery polls should only expose telemetry refreshed during this read.
                 # Preserve stable metadata that can be reused across polls.
-                parsed_updates: dict[str, Any] = {
-                    key: cached_data[key]
-                    for key in ("serial_number", "device_name", "sw_version")
-                    if key in cached_data
-                }
-                parsed_updates.update(
-                    {
-                        "battery_variant": variant,
-                        "model": cached_data.get(
-                            "model", BATTERY_DEFAULT_MODELS[variant]
-                        ),
-                    }
-                )
+                parsed_updates = dict(device.parsed_data)
                 device_id = BATTERY_PROTOCOL_DEVICE_IDS[variant]
 
                 for cmd_name, (register, word_count) in BATTERY_COMMANDS.items():
