@@ -626,14 +626,17 @@ class RenogyBleClient:
 
                     request = build_battery_command(variant, register, word_count)
                     await session.client.write_gatt_char(self._write_char_uuid, request)
-                    result_data = await self._wait_for_valid_read_response(
-                        session,
-                        expected_device_id=device_id,
-                        function_code=0x03,
-                        word_count=word_count,
-                        cmd_name=f"battery {cmd_name}",
-                        device_name=device.name,
-                    )
+                    try:
+                        result_data = await self._wait_for_valid_read_response(
+                            session,
+                            expected_device_id=device_id,
+                            function_code=0x03,
+                            word_count=word_count,
+                            cmd_name=f"battery {cmd_name}",
+                            device_name=device.name,
+                        )
+                    except asyncio.TimeoutError:
+                        continue
 
                     parser = {
                         "device_info": parse_battery_device_info,
