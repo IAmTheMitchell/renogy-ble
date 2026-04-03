@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## [2.3.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.2...v2.3.0) (2026-04-03)
+
+
+### Features
+
+* add Renogy battery BLE support ([#83](https://github.com/IAmTheMitchell/renogy-ble/issues/83)) ([49b6954](https://github.com/IAmTheMitchell/renogy-ble/commit/49b6954a5ee6cabf5a14a86317440814b7f843bf))
+
+
+### Documentation
+
+* update inverter support docs ([#79](https://github.com/IAmTheMitchell/renogy-ble/issues/79)) ([53b029a](https://github.com/IAmTheMitchell/renogy-ble/commit/53b029a420a27e5e733f7a608dd81fa4be430e7d))
+
 ## [2.2.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.1...v2.2.2) (2026-03-22)
 
 
