@@ -1243,10 +1243,12 @@ class RenogyBleClient:
                     notify_handle = characteristic.handle
 
         if notify_handle is None or write_handle is None:
-            raise ConnectionError(
-                "Failed to resolve Renogy battery BLE characteristics for "
-                f"{device.name}."
+            logger.debug(
+                "Failed to resolve Renogy battery BLE characteristic handles for "
+                "%s; falling back to UUID access",
+                device.name,
             )
+            return
 
         session.read_target = notify_handle
         session.write_target = write_handle
