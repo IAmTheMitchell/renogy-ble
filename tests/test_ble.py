@@ -10,6 +10,8 @@ from renogy_ble.battery import BATTERY_VARIANT_LEGACY, BATTERY_VARIANT_PRO
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
     INVERTER_DEVICE_ID,
+    RENOGY_READ_CHAR_UUID,
+    RENOGY_WRITE_CHAR_UUID,
     UNAVAILABLE_RETRY_INTERVAL,
     BleakError,
     RenogyBleClient,
@@ -831,6 +833,131 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
     assert dummy_client.start_notify_targets[0] == 33
     assert dummy_client.write_targets == [17] * 4
+
+
+def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
+    monkeypatch,
+):
+    class DummyCharacteristic:
+        def __init__(self, uuid: str, handle: int, properties: list[str]):
+            self.uuid = uuid
+            self.handle = handle
+            self.properties = properties
+
+    class DummyService:
+        def __init__(self, uuid: str, characteristics: list[DummyCharacteristic]):
+            self.uuid = uuid
+            self.characteristics = characteristics
+
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+            self.start_notify_targets: list[int | str] = []
+            self.write_targets: list[int | str] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+            self.services = [
+                DummyService(
+                    "00001234-0000-1000-8000-00805f9b34fb",
+                    [
+                        DummyCharacteristic(
+                            "0000ffd1-0000-1000-8000-00805f9b34fb",
+                            17,
+                            ["write-without-response"],
+                        )
+                    ],
+                ),
+                DummyService(
+                    "00005678-0000-1000-8000-00805f9b34fb",
+                    [
+                        DummyCharacteristic(
+                            "0000fff1-0000-1000-8000-00805f9b34fb",
+                            33,
+                            ["notify"],
+                        )
+                    ],
+                ),
+            ]
+
+        async def start_notify(self, target, callback):
+            self.start_notify_targets.append(target)
+            self._notify_handler = callback
+
+        async def write_gatt_char(self, target, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            request = bytes(payload)
+            self.write_targets.append(target)
+            register = int.from_bytes(request[2:4], "big")
+
+            def _frame(device_id: int, payload_bytes: bytes) -> bytes:
+                frame = bytearray([device_id, 0x03, len(payload_bytes)])
+                frame.extend(payload_bytes)
+                crc_low, crc_high = modbus_crc(frame)
+                frame.extend([crc_low, crc_high])
+                return bytes(frame)
+
+            info_payload = bytearray(56)
+            info_payload[12:28] = b"RENOGY-PRO-0002 "
+            info_payload[36:52] = b"Pro Battery     "
+            info_payload[52:56] = b"2.10"
+
+            pack_payload = bytearray(14)
+            pack_payload[0:2] = int(1234).to_bytes(2, "big", signed=True)
+            pack_payload[2:4] = (512).to_bytes(2, "big")
+            pack_payload[4:8] = (65000).to_bytes(4, "big")
+            pack_payload[8:12] = (100000).to_bytes(4, "big")
+            pack_payload[12:14] = (7).to_bytes(2, "big")
+
+            cell_payload = bytearray(68)
+            cell_payload[0:2] = (4).to_bytes(2, "big")
+            for index, value in enumerate((330, 330, 331, 331)):
+                start = 2 + index * 2
+                cell_payload[start : start + 2] = value.to_bytes(2, "big")
+            cell_payload[34:36] = (1).to_bytes(2, "big")
+            cell_payload[36:38] = (230).to_bytes(2, "big", signed=True)
+
+            mosfet_payload = bytearray(16)
+            mosfet_payload[13] = 0x02
+
+            responses = {
+                0x13F0: _frame(0xFF, bytes(info_payload)),
+                0x13B2: _frame(0xFF, bytes(pack_payload)),
+                0x1388: _frame(0xFF, bytes(cell_payload)),
+                0x13EC: _frame(0xFF, bytes(mosfet_payload)),
+            }
+            self._notify_handler(None, responses[register])
+
+        async def stop_notify(self, target):
+            self.stop_notify_calls += 1
+            self.start_notify_targets.append(target)
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRBP123456"), device_type="battery"
+    )
+
+    result = asyncio.run(client.read_device(device))
+
+    assert result.success is True
+    assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
+    assert dummy_client.start_notify_targets[0] == RENOGY_READ_CHAR_UUID
+    assert dummy_client.write_targets == [RENOGY_WRITE_CHAR_UUID] * 4
 
 
 def test_read_device_battery_continues_after_command_timeout(monkeypatch):
