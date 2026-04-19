@@ -12,13 +12,16 @@ from typing import Any, Literal, Optional
 
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
+from bleak.uuids import normalize_uuid_str
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 
 from renogy_ble.battery import (
     BATTERY_COMMANDS,
     BATTERY_DEFAULT_MODELS,
     BATTERY_DEVICE_TYPE,
+    BATTERY_LEGACY_NAME_PREFIX,
     BATTERY_PROTOCOL_DEVICE_IDS,
+    BATTERY_VARIANT_LEGACY,
     BatteryVariant,
     build_battery_command,
     detect_battery_variant,
@@ -34,6 +37,8 @@ logger = logging.getLogger(__name__)
 # BLE Characteristics and Service UUIDs
 RENOGY_READ_CHAR_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 RENOGY_WRITE_CHAR_UUID = "0000ffd1-0000-1000-8000-00805f9b34fb"
+RENOGY_NOTIFY_SERVICE_UUID = "0000fff0-0000-1000-8000-00805f9b34fb"
+RENOGY_WRITE_SERVICE_UUID = "0000ffd0-0000-1000-8000-00805f9b34fb"
 
 # Time in minutes to wait before attempting to reconnect to unavailable devices
 UNAVAILABLE_RETRY_INTERVAL = 10
@@ -428,6 +433,8 @@ class _PersistentBleSession:
     notification_event: asyncio.Event = field(default_factory=asyncio.Event)
     notification_data: bytearray = field(default_factory=bytearray)
     notify_started: bool = False
+    read_target: int | str | None = None
+    write_target: int | str | None = None
 
 
 class RenogyBleClient:
@@ -611,6 +618,13 @@ class RenogyBleClient:
             device.name,
             manufacturer_data=device.manufacturer_data,
         )
+        if variant is None and device.name.startswith(BATTERY_LEGACY_NAME_PREFIX):
+            logger.debug(
+                "Falling back to legacy battery protocol for manually configured "
+                "BT-TH device %s",
+                device.name,
+            )
+            variant = BATTERY_VARIANT_LEGACY
         stable_data: dict[str, Any] = {
             key: cached_data[key]
             for key in ("serial_number", "device_name", "sw_version")
@@ -666,7 +680,10 @@ class RenogyBleClient:
                         raise RuntimeError("BLE session is not connected")
 
                     request = build_battery_command(variant, register, word_count)
-                    await session.client.write_gatt_char(self._write_char_uuid, request)
+                    await session.client.write_gatt_char(
+                        session.write_target or self._write_char_uuid,
+                        request,
+                    )
                     try:
                         result_data = await self._wait_for_valid_read_response(
                             session,
@@ -1013,6 +1030,7 @@ class RenogyBleClient:
                 return RenogyBleWriteResult(False, connection_error)
 
             self._reset_notifications(session)
+            write_target = session.write_target or self._write_char_uuid
             modbus_request = create_modbus_write_request(
                 self._device_id, register, value, function_code=function_code
             )
@@ -1024,7 +1042,7 @@ class RenogyBleClient:
                 if session.client is None:
                     raise RuntimeError("BLE session is not connected")
                 await session.client.write_gatt_char(
-                    self._write_char_uuid,
+                    write_target,
                     modbus_request,
                 )
                 await self._wait_for_write_response(
@@ -1164,6 +1182,10 @@ class RenogyBleClient:
             )
             session.notify_started = False
             self._reset_notifications(session)
+            session.read_target = self._read_char_uuid
+            session.write_target = self._write_char_uuid
+            if device.device_type == BATTERY_DEVICE_TYPE:
+                self._resolve_battery_characteristics(device, session)
 
         if session.notify_started:
             return
@@ -1172,8 +1194,62 @@ class RenogyBleClient:
             session.notification_data.extend(data)
             session.notification_event.set()
 
-        await session.client.start_notify(self._read_char_uuid, notification_handler)
+        await session.client.start_notify(
+            session.read_target or self._read_char_uuid, notification_handler
+        )
         session.notify_started = True
+
+    def _resolve_battery_characteristics(
+        self,
+        device: RenogyBLEDevice,
+        session: _PersistentBleSession,
+    ) -> None:
+        """Resolve Renogy battery characteristic handles from the expected services."""
+        if session.client is None:
+            raise RuntimeError("BLE session is not connected")
+
+        services = getattr(session.client, "services", None)
+        if services is None:
+            logger.debug(
+                "BLE services unavailable while resolving battery characteristics "
+                "for %s; falling back to UUID access",
+                device.name,
+            )
+            return
+
+        notify_handle = None
+        write_handle = None
+        notify_service_uuid = normalize_uuid_str(RENOGY_NOTIFY_SERVICE_UUID)
+        write_service_uuid = normalize_uuid_str(RENOGY_WRITE_SERVICE_UUID)
+        notify_char_uuid = normalize_uuid_str(self._read_char_uuid)
+        write_char_uuid = normalize_uuid_str(self._write_char_uuid)
+
+        for service in services:
+            service_uuid = normalize_uuid_str(service.uuid)
+            for characteristic in service.characteristics:
+                char_uuid = normalize_uuid_str(characteristic.uuid)
+                properties = set(characteristic.properties)
+                if (
+                    service_uuid == write_service_uuid
+                    and char_uuid == write_char_uuid
+                    and {"write", "write-without-response"} & properties
+                ):
+                    write_handle = characteristic.handle
+                if (
+                    service_uuid == notify_service_uuid
+                    and char_uuid == notify_char_uuid
+                    and "notify" in properties
+                ):
+                    notify_handle = characteristic.handle
+
+        if notify_handle is None or write_handle is None:
+            raise ConnectionError(
+                "Failed to resolve Renogy battery BLE characteristics for "
+                f"{device.name}."
+            )
+
+        session.read_target = notify_handle
+        session.write_target = write_handle
 
     async def _close_session(
         self,
@@ -1187,7 +1263,9 @@ class RenogyBleClient:
         if session.client is not None:
             if session.notify_started:
                 try:
-                    await session.client.stop_notify(self._read_char_uuid)
+                    await session.client.stop_notify(
+                        session.read_target or self._read_char_uuid
+                    )
                 except Exception as exc:
                     logger.debug(
                         "Error stopping notify for device %s: %s",
@@ -1208,6 +1286,8 @@ class RenogyBleClient:
 
         session.client = None
         session.notify_started = False
+        session.read_target = None
+        session.write_target = None
         self._reset_notifications(session)
 
         if remove:
