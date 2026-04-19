@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## [2.3.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.3.0...v2.3.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* fall back to UUID access for battery BLE handles ([#92](https://github.com/IAmTheMitchell/renogy-ble/issues/92)) ([0e3a055](https://github.com/IAmTheMitchell/renogy-ble/commit/0e3a055d171ae7cc910efc83868e8a5113e40ad8))
+* resolve renogy battery polling ([#90](https://github.com/IAmTheMitchell/renogy-ble/issues/90)) ([a0fbe61](https://github.com/IAmTheMitchell/renogy-ble/commit/a0fbe615a132a60ed36cfd9b92611844b41459c4))
+
 ## [2.3.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.2.2...v2.3.0) (2026-04-03)
 
 
