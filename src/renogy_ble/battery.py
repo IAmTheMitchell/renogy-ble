@@ -191,9 +191,14 @@ def parse_battery_cell_status(
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
-    # Cell voltage units differ by protocol variant: legacy/pro report
-    # millivolts, while RNGPRO-family batteries report 0.1 V units.
-    cell_divisor = 10 if variant == BATTERY_VARIANT_RNGPRO else 1000
+    # Cell voltage units differ by protocol variant: legacy reports millivolts,
+    # while the pro (RNGRBP/RNGC) and RNGPRO families report 0.1 V units. #120
+    # corrected the RNGPRO variant; the pro family scales the same way, confirmed
+    # on RNGRBP hardware (4 cells x 3.6 V = 14.4 V pack, matching the pack-voltage
+    # register read separately) and cyrils/renogy-bt.
+    cell_divisor = (
+        10 if variant in (BATTERY_VARIANT_RNGPRO, BATTERY_VARIANT_PRO) else 1000
+    )
     cell_values = [
         int.from_bytes(data[start : start + 2], byteorder="big") / cell_divisor
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
