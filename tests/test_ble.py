@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import Callable
 from unittest.mock import MagicMock
 
+import pytest
+
 from renogy_ble.battery import BATTERY_VARIANT_LEGACY, BATTERY_VARIANT_PRO
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
@@ -278,13 +280,20 @@ def test_read_device_reads_inverter_data_with_validated_frames(monkeypatch):
             responses = {
                 4000: _modbus_read_response(
                     INVERTER_DEVICE_ID,
-                    [2300, 125, 2295, 250, 6000, 401, 255, 0, 0, 5995] + ([0] * 22),
+                    [2300, 125, 2295, 250, 6000, 401, 255, 0, 0, 5995],
                 ),
                 4408: _modbus_read_response(
                     INVERTER_DEVICE_ID, [175, 500, 550, 0, 0, 0]
                 ),
+                4327: _modbus_read_response(
+                    INVERTER_DEVICE_ID, [80, 65526, 1200, 30, 360, 1, 360]
+                ),
                 4109: _modbus_read_response(INVERTER_DEVICE_ID, [32]),
                 4311: _modbus_ascii_response(INVERTER_DEVICE_ID, "RIV1220PU-126", 8),
+                4456: _modbus_read_response(INVERTER_DEVICE_ID, [200]),
+                4422: _modbus_read_response(INVERTER_DEVICE_ID, [1500]),
+                4430: _modbus_read_response(INVERTER_DEVICE_ID, [120]),
+                4452: _modbus_read_response(INVERTER_DEVICE_ID, [158]),
             }
             response = responses[register]
             wrong_device = response.replace(
@@ -334,12 +343,80 @@ def test_read_device_reads_inverter_data_with_validated_frames(monkeypatch):
         "load_current": 1.75,
         "load_active_power": 500,
         "load_apparent_power": 550,
+        "battery_percentage": 80,
+        "charging_current": pytest.approx(-1.0),
+        "solar_voltage": pytest.approx(120.0),
+        "solar_current": pytest.approx(3.0),
+        "solar_power": 360,
+        "charging_status": "constant_current",
+        "charging_power": 360,
         "device_id": 32,
         "model": "RIV1220PU-126",
+        "inverter_ac_input_current_limit": pytest.approx(20.0),
+        "inverter_charge_current": pytest.approx(150.0),
+        "inverter_low_voltage_warn": pytest.approx(12.0),
+        "inverter_over_voltage": pytest.approx(15.8),
     }
-    assert [request[0] for request in dummy_client.writes] == [INVERTER_DEVICE_ID] * 4
+    assert [request[0] for request in dummy_client.writes] == [INVERTER_DEVICE_ID] * 9
+    assert [int.from_bytes(request[2:4], "big") for request in dummy_client.writes] == [
+        4000,
+        4408,
+        4327,
+        4109,
+        4311,
+        4456,
+        4422,
+        4430,
+        4452,
+    ]
     assert dummy_client.stop_notify_calls == 1
     assert dummy_client.disconnect_calls == 1
+
+
+def test_parse_inverter_charging_response():
+    payload = _modbus_read_response(
+        INVERTER_DEVICE_ID, [80, 65526, 1200, 30, 360, 1, 360]
+    )
+    parsed = RenogyBleClient._parse_inverter_charging_response(payload)
+    assert parsed["battery_percentage"] == 80
+    assert parsed["charging_current"] == pytest.approx(-1.0)  # 65526 = -10 signed, x0.1
+    assert parsed["solar_voltage"] == pytest.approx(120.0)
+    assert parsed["solar_current"] == pytest.approx(3.0)
+    assert parsed["solar_power"] == 360
+    assert parsed["charging_status"] == "constant_current"
+    assert parsed["charging_power"] == 360
+
+
+def test_parse_inverter_charging_response_too_short():
+    assert RenogyBleClient._parse_inverter_charging_response(b"\x20\x03\x02") == {}
+
+
+def test_parse_inverter_ac_input_current_limit():
+    payload = _modbus_read_response(INVERTER_DEVICE_ID, [200])
+    parsed = RenogyBleClient._parse_inverter_ac_input_current_limit(payload)
+    assert parsed == {"inverter_ac_input_current_limit": pytest.approx(20.0)}
+
+
+def test_parse_inverter_charge_current():
+    payload = _modbus_read_response(INVERTER_DEVICE_ID, [1500])
+    parsed = RenogyBleClient._parse_inverter_charge_current(payload)
+    assert parsed == {"inverter_charge_current": pytest.approx(150.0)}
+
+
+def test_parse_inverter_low_voltage_warn():
+    payload = _modbus_read_response(INVERTER_DEVICE_ID, [120])
+    parsed = RenogyBleClient._parse_inverter_low_voltage_warn(payload)
+    assert parsed == {"inverter_low_voltage_warn": pytest.approx(12.0)}
+
+
+def test_parse_inverter_over_voltage():
+    payload = _modbus_read_response(INVERTER_DEVICE_ID, [158])
+    parsed = RenogyBleClient._parse_inverter_over_voltage(payload)
+    assert parsed == {"inverter_over_voltage": pytest.approx(15.8)}
+
+
+def test_parse_inverter_setpoint_too_short():
+    assert RenogyBleClient._parse_inverter_ac_input_current_limit(b"\x20\x03\x02") == {}
 
 
 def test_read_device_reads_legacy_battery_data(monkeypatch):
@@ -1249,11 +1326,18 @@ def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
             responses = {
                 4000: _modbus_read_response(
                     INVERTER_DEVICE_ID,
-                    [2300, 100, 2290, 200, 6000, 402, 260, 0, 0, 6000] + ([0] * 22),
+                    [2300, 100, 2290, 200, 6000, 402, 260, 0, 0, 6000],
                 ),
                 4408: _modbus_read_response(
                     INVERTER_DEVICE_ID, [150, 450, 475, 0, 0, 0]
                 ),
+                4327: _modbus_read_response(
+                    INVERTER_DEVICE_ID, [80, 65526, 1200, 30, 360, 1, 360]
+                ),
+                4456: _modbus_read_response(INVERTER_DEVICE_ID, [200]),
+                4422: _modbus_read_response(INVERTER_DEVICE_ID, [1500]),
+                4430: _modbus_read_response(INVERTER_DEVICE_ID, [120]),
+                4452: _modbus_read_response(INVERTER_DEVICE_ID, [158]),
             }
             self._notify_handler(None, responses[register])
 
@@ -1303,13 +1387,31 @@ def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
     assert [int.from_bytes(request[2:4], "big") for request in dummy_client.writes] == [
         4000,
         4408,
+        4327,
+        4456,
+        4422,
+        4430,
+        4452,
         4000,
         4408,
+        4327,
+        4456,
+        4422,
+        4430,
+        4452,
     ]
     assert first_data["device_id"] == 32
     assert first_data["model"] == "RIV1220PU-126"
+    assert first_data["inverter_ac_input_current_limit"] == pytest.approx(20.0)
+    assert first_data["inverter_charge_current"] == pytest.approx(150.0)
+    assert first_data["inverter_low_voltage_warn"] == pytest.approx(12.0)
+    assert first_data["inverter_over_voltage"] == pytest.approx(15.8)
     assert second_data["device_id"] == 32
     assert second_data["model"] == "RIV1220PU-126"
+    assert second_data["inverter_ac_input_current_limit"] == pytest.approx(20.0)
+    assert second_data["inverter_charge_current"] == pytest.approx(150.0)
+    assert second_data["inverter_low_voltage_warn"] == pytest.approx(12.0)
+    assert second_data["inverter_over_voltage"] == pytest.approx(15.8)
 
 
 def test_persistent_session_reuses_connection_for_reads(monkeypatch):

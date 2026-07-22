@@ -65,6 +65,16 @@ INVERTER_INIT_DELAY = 1.0
 INVERTER_INTER_COMMAND_DELAY = 0.3
 INVERTER_COMMAND_TIMEOUT = 10.0
 
+# Charging state values reported by inverter register 4327
+INVERTER_CHARGING_STATE = {
+    0: "deactivated",
+    1: "constant_current",
+    2: "constant_voltage",
+    4: "floating",
+    6: "battery_activation",
+    7: "battery_disconnecting",
+}
+
 # Modbus commands for requesting data
 # Format: (function_code, start_register, word_count)
 COMMANDS = {
@@ -796,9 +806,10 @@ class RenogyBleClient:
                 parsed_updates: dict[str, Any] = {}
                 read_specs = (
                     _InverterReadSpec(
-                        4000, 32, "_parse_inverter_main_response", retries=2
+                        4000, 10, "_parse_inverter_main_response", retries=2
                     ),
                     _InverterReadSpec(4408, 6, "_parse_inverter_load_response"),
+                    _InverterReadSpec(4327, 7, "_parse_inverter_charging_response"),
                     _InverterReadSpec(
                         4109,
                         1,
@@ -811,6 +822,12 @@ class RenogyBleClient:
                         "_parse_inverter_model_response",
                         cache_key="model",
                     ),
+                    _InverterReadSpec(
+                        4456, 1, "_parse_inverter_ac_input_current_limit"
+                    ),
+                    _InverterReadSpec(4422, 1, "_parse_inverter_charge_current"),
+                    _InverterReadSpec(4430, 1, "_parse_inverter_low_voltage_warn"),
+                    _InverterReadSpec(4452, 1, "_parse_inverter_over_voltage"),
                 )
 
                 for index, spec in enumerate(read_specs):
@@ -981,6 +998,31 @@ class RenogyBleClient:
         }
 
     @staticmethod
+    def _parse_inverter_charging_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4327."""
+        if len(data) < 19:
+            logger.warning("Inverter charging response too short: %d bytes", len(data))
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 7:
+            logger.warning("Not enough inverter charging values: %d", len(values))
+            return {}
+
+        return {
+            "battery_percentage": values[0],
+            "charging_current": int.from_bytes(data[5:7], "big", signed=True) * 0.1,
+            "solar_voltage": values[2] * 0.1,
+            "solar_current": values[3] * 0.1,
+            "solar_power": values[4],
+            "charging_status": INVERTER_CHARGING_STATE.get(values[5]),
+            "charging_power": values[6],
+        }
+
+    @staticmethod
     def _parse_inverter_device_id_response(data: bytes) -> dict[str, Any]:
         """Parse Modbus response from inverter register 4109."""
         if len(data) < 7:
@@ -1001,6 +1043,34 @@ class RenogyBleClient:
             return {}
 
         return {"model": model}
+
+    @staticmethod
+    def _parse_inverter_setpoint(data: bytes, key: str) -> dict[str, Any]:
+        """Decode a single-register inverter setpoint response (raw x0.1)."""
+        if len(data) < 5:
+            logger.warning("Inverter setpoint response too short: %d bytes", len(data))
+            return {}
+        return {key: int.from_bytes(data[3:5], "big") * 0.1}
+
+    @staticmethod
+    def _parse_inverter_ac_input_current_limit(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(
+            data, "inverter_ac_input_current_limit"
+        )
+
+    @staticmethod
+    def _parse_inverter_charge_current(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(data, "inverter_charge_current")
+
+    @staticmethod
+    def _parse_inverter_low_voltage_warn(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(
+            data, "inverter_low_voltage_warn"
+        )
+
+    @staticmethod
+    def _parse_inverter_over_voltage(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(data, "inverter_over_voltage")
 
     async def write_single_register(
         self,
