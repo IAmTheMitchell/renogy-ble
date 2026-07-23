@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.4.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.3.1...v2.4.0) (2026-07-23)
+
+
+### Features
+
+* support RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) ([#120](https://github.com/IAmTheMitchell/renogy-ble/issues/120)) ([6d8caa4](https://github.com/IAmTheMitchell/renogy-ble/commit/6d8caa41fd81505cdc4ff90140811280c4955af8))
+
 ## [2.3.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.3.0...v2.3.1) (2026-04-19)
 
 
