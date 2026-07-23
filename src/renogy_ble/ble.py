@@ -680,9 +680,16 @@ class RenogyBleClient:
                         raise RuntimeError("BLE session is not connected")
 
                     request = build_battery_command(variant, register, word_count)
+                    # Renogy batteries' ffd1 write characteristic only accepts
+                    # BLE Write-Without-Response. A default (with-response) write
+                    # is rejected by the pack with ATT 0x0E "Unlikely Error",
+                    # which previously failed every battery poll. Confirmed on
+                    # RNGRBP (RBT12200LFP-BT) hardware, and matches DC Home's own
+                    # WRITE_NO_RESPONSE selection.
                     await session.client.write_gatt_char(
                         session.write_target or self._write_char_uuid,
                         request,
+                        response=False,
                     )
                     try:
                         result_data = await self._wait_for_valid_read_response(

@@ -268,7 +268,7 @@ def test_read_device_reads_inverter_data_with_validated_frames(monkeypatch):
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -354,7 +354,7 @@ def test_read_device_reads_legacy_battery_data(monkeypatch):
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -455,7 +455,7 @@ def test_read_device_reads_battery_pro_data(monkeypatch):
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -533,6 +533,59 @@ def test_read_device_reads_battery_pro_data(monkeypatch):
     assert [request[0] for request in dummy_client.writes] == [0xFF] * 4
 
 
+def test_read_device_writes_battery_without_response(monkeypatch):
+    """Battery ffd1 only accepts Write-Without-Response; a with-response write is
+    rejected by the pack with ATT 0x0E. Every battery command must pass
+    response=False (regression guard for the RNGRBP "Unlikely Error" bug)."""
+
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.responses: list[object] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _target, payload, response=None):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+            self.responses.append(response)
+            request = bytes(payload)
+            register = int.from_bytes(request[2:4], "big")
+            # Minimal valid frames so the read loop completes for every command.
+            sizes = {0x13F0: 56, 0x13B2: 14, 0x1388: 68, 0x13EC: 16}
+            body = bytearray([0xFF, 0x03, sizes[register]]) + bytearray(sizes[register])
+            crc_low, crc_high = modbus_crc(body)
+            body.extend([crc_low, crc_high])
+            self._notify_handler(None, bytes(body))
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient()
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="RNGRBP123456"), device_type="battery"
+    )
+
+    asyncio.run(client.read_device(device))
+
+    assert dummy_client.responses, "no battery writes were issued"
+    assert all(response is False for response in dummy_client.responses)
+
+
 def test_read_device_detects_battery_variant_from_manufacturer_data(monkeypatch):
     class DummyClient:
         def __init__(self):
@@ -545,7 +598,7 @@ def test_read_device_detects_battery_variant_from_manufacturer_data(monkeypatch)
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -635,7 +688,7 @@ def test_read_device_falls_back_to_legacy_variant_for_manual_bt_th_battery(
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -759,7 +812,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
             self.start_notify_targets.append(target)
             self._notify_handler = callback
 
-        async def write_gatt_char(self, target, payload):
+        async def write_gatt_char(self, target, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -884,7 +937,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
             self.start_notify_targets.append(target)
             self._notify_handler = callback
 
-        async def write_gatt_char(self, target, payload):
+        async def write_gatt_char(self, target, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -972,7 +1025,7 @@ def test_read_device_battery_continues_after_command_timeout(monkeypatch):
         async def start_notify(self, *_args, **_kwargs):
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             self.writes.append(bytes(payload))
 
         async def stop_notify(self, *_args, **_kwargs):
@@ -1070,7 +1123,7 @@ def test_read_device_battery_drops_stale_partial_poll_data(monkeypatch):
             self.start_notify_calls += 1
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             self.writes.append(bytes(payload))
 
         async def stop_notify(self, *_args, **_kwargs):
@@ -1239,7 +1292,7 @@ def test_read_device_inverter_preserves_cached_metadata_in_persistent_session(
             self.start_notify_calls += 1
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
 
@@ -1454,7 +1507,7 @@ def test_persistent_session_reuses_connection_for_writes(monkeypatch):
             self.start_notify_calls += 1
             self._notify_handler = _args[1]
 
-        async def write_gatt_char(self, _uuid, payload):
+        async def write_gatt_char(self, _uuid, payload, response=None):
             if self._notify_handler is None:
                 raise AssertionError("Notify handler was not set.")
             self._notify_handler(None, bytes(payload))
