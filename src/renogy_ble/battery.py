@@ -226,19 +226,20 @@ def parse_battery_mosfet_status(
     variant: BatteryVariant,
 ) -> dict[str, Any]:
     """Parse fault and MOSFET flags."""
-    if variant == BATTERY_VARIANT_RNGPRO:
-        # RNGPRO-family batteries do not expose the fault bitmask across the same
-        # 14-byte span; the generic decode picks up non-fault status bytes (e.g.
-        # 0xAA) and yields a spurious, permanently-nonzero value. Until the
-        # RNGPRO fault-register layout is characterized, report no fault rather
-        # than a false positive. The MOSFET flags below decode correctly.
-        problem_code = 0
-    else:
-        problem_code = int.from_bytes(data[3:17], byteorder="big") & (~0xE)
-
-    return {
-        "battery_problem_code": problem_code,
+    parsed: dict[str, Any] = {
         "charge_mosfet_enabled": bool(data[16] & 0x2),
         "discharge_mosfet_enabled": bool(data[16] & 0x4),
         "heater_enabled": bool(data[17] & 0x20),
     }
+
+    # RNGPRO-family batteries do not expose the fault bitmask across the same
+    # 14-byte span; the generic decode picks up non-fault status bytes (e.g.
+    # 0xAA) and yields a spurious, permanently-nonzero value. Until the RNGPRO
+    # fault-register layout is characterized, omit the problem code so consumers
+    # represent it as unknown rather than falsely reporting no fault.
+    if variant != BATTERY_VARIANT_RNGPRO:
+        parsed["battery_problem_code"] = int.from_bytes(data[3:17], byteorder="big") & (
+            ~0xE
+        )
+
+    return parsed

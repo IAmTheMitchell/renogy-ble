@@ -6,6 +6,7 @@ RBT12500LFP-SHBT (12 V / 500 Ah) battery, which advertises as
 own readout: 13.3 V, ~2 A discharge, 3.3 V/cell, ~23 C, 500 Ah.
 """
 
+import renogy_ble
 from renogy_ble.battery import (
     BATTERY_VARIANT_PRO,
     BATTERY_VARIANT_RNGPRO,
@@ -30,6 +31,11 @@ def test_detect_rngpro_variant() -> None:
     assert is_supported_battery_name("RNGPRO125BAT-EF036881") is True
     # existing RNGRBP/RNGC batteries must remain classified as plain "pro"
     assert detect_battery_variant("RNGRBP123456") == BATTERY_VARIANT_PRO
+
+
+def test_rngpro_variant_is_exported_from_package() -> None:
+    assert renogy_ble.BATTERY_VARIANT_RNGPRO == BATTERY_VARIANT_RNGPRO
+    assert "BATTERY_VARIANT_RNGPRO" in renogy_ble.__all__
 
 
 def test_rngpro_uses_universal_device_id() -> None:
@@ -61,8 +67,13 @@ def test_rngpro_cell_status_scaling() -> None:
 
 def test_rngpro_mosfet_status_no_false_fault() -> None:
     parsed = parse_battery_mosfet_status(MOSFET_STATUS, variant=BATTERY_VARIANT_RNGPRO)
-    # the generic 14-byte fault span would yield a spurious huge value here
-    assert parsed["battery_problem_code"] == 0
+    # The generic 14-byte fault span would yield a spurious huge value here.
+    assert "battery_problem_code" not in parsed
     assert parsed["charge_mosfet_enabled"] is True
     assert parsed["discharge_mosfet_enabled"] is True
     assert parsed["heater_enabled"] is False
+
+
+def test_existing_pro_mosfet_status_keeps_fault_decoder() -> None:
+    parsed = parse_battery_mosfet_status(MOSFET_STATUS, variant=BATTERY_VARIANT_PRO)
+    assert parsed["battery_problem_code"] > 0
