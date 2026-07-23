@@ -159,6 +159,58 @@ def test_should_retry_connection_interval():
     assert device.should_retry_connection is True
 
 
+def test_configurable_max_failures_grace():
+    device = RenogyBLEDevice(_mock_ble_device(), max_failures=5)
+
+    for _ in range(4):
+        device.update_availability(False)
+    assert device.is_available is True
+
+    device.update_availability(False)
+    assert device.is_available is False
+
+
+def test_configurable_unavailable_retry_interval():
+    device = RenogyBLEDevice(_mock_ble_device(), unavailable_retry_interval=2)
+    device.available = False
+    device.failure_count = device.max_failures
+    device.last_unavailable_time = None
+
+    # First call records the moment it went unavailable and refuses a retry.
+    assert device.should_retry_connection is False
+    assert device.last_unavailable_time is not None
+
+    # Just under 2 minutes elapsed → still no retry (proves it is not the
+    # default 10-minute cooldown but not yet the configured 2-minute one).
+    device.last_unavailable_time = datetime.now() - timedelta(minutes=1)
+    assert device.should_retry_connection is False
+
+    # Past 2 minutes → retry permitted.
+    device.last_unavailable_time = datetime.now() - timedelta(minutes=2, seconds=1)
+    assert device.should_retry_connection is True
+
+
+def test_configurable_grace_defaults_preserve_current_behaviour():
+    device = RenogyBLEDevice(_mock_ble_device())
+
+    # Default grace tolerates 2 failures, unavailable on the 3rd.
+    device.update_availability(False)
+    device.update_availability(False)
+    assert device.is_available is True
+    device.update_availability(False)
+    assert device.is_available is False
+
+    # Default cooldown is the 10-minute module constant.
+    device.last_unavailable_time = datetime.now() - timedelta(
+        minutes=UNAVAILABLE_RETRY_INTERVAL - 1
+    )
+    assert device.should_retry_connection is False
+    device.last_unavailable_time = datetime.now() - timedelta(
+        minutes=UNAVAILABLE_RETRY_INTERVAL + 1
+    )
+    assert device.should_retry_connection is True
+
+
 def test_read_device_skips_disconnect_when_not_connected(monkeypatch):
     class DummyClient:
         def __init__(self):

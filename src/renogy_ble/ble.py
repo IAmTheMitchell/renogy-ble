@@ -199,6 +199,8 @@ class RenogyBLEDevice:
         advertisement_rssi: Optional[int] = None,
         device_type: str = DEFAULT_DEVICE_TYPE,
         manufacturer_data: dict[int, bytes] | None = None,
+        max_failures: int = 3,
+        unavailable_retry_interval: int = UNAVAILABLE_RETRY_INTERVAL,
     ):
         """Initialize the Renogy BLE device."""
         self.ble_device = ble_device
@@ -215,7 +217,8 @@ class RenogyBLEDevice:
         self.last_seen = datetime.now()
         self.data: Optional[dict[str, Any]] = None
         self.failure_count = 0
-        self.max_failures = 3
+        self.max_failures = max_failures
+        self.unavailable_retry_interval = unavailable_retry_interval
         self.available = True
         self.parsed_data: dict[str, Any] = {}
         self.device_type = device_type
@@ -242,7 +245,7 @@ class RenogyBLEDevice:
             return False
 
         retry_time = self.last_unavailable_time + timedelta(
-            minutes=UNAVAILABLE_RETRY_INTERVAL
+            minutes=self.unavailable_retry_interval
         )
         if datetime.now() >= retry_time:
             logger.debug(
