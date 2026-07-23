@@ -8,9 +8,14 @@ from typing import Any, Literal
 BATTERY_DEVICE_TYPE = "battery"
 BATTERY_VARIANT_LEGACY = "legacy"
 BATTERY_VARIANT_PRO = "pro"
-BatteryVariant = Literal["legacy", "pro"]
+# RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) share the Pro register map and
+# device id but use different field scaling than RNGRBP/RNGC "pro" batteries:
+# current in 0.01 A units (not 0.1 A) and cell voltages in 0.1 V units (not mV).
+BATTERY_VARIANT_RNGPRO = "rngpro"
+BatteryVariant = Literal["legacy", "pro", "rngpro"]
 
 BATTERY_PRO_NAME_PREFIXES = ("RNGRBP", "RNGC")
+BATTERY_RNGPRO_NAME_PREFIXES = ("RNGPRO",)
 BATTERY_LEGACY_NAME_PREFIX = "BT-TH-"
 BATTERY_LEGACY_NAME_MARKERS = ("BATT", "BATTERY")
 BATTERY_PRO_MANUFACTURER_ID = 0xE14C
@@ -18,11 +23,13 @@ BATTERY_PRO_MANUFACTURER_ID = 0xE14C
 BATTERY_PROTOCOL_DEVICE_IDS: dict[BatteryVariant, int] = {
     BATTERY_VARIANT_LEGACY: 0x30,
     BATTERY_VARIANT_PRO: 0xFF,
+    BATTERY_VARIANT_RNGPRO: 0xFF,
 }
 
 BATTERY_DEFAULT_MODELS: dict[BatteryVariant, str] = {
     BATTERY_VARIANT_LEGACY: "Renogy Bluetooth Battery",
     BATTERY_VARIANT_PRO: "Renogy BT Battery Pro",
+    BATTERY_VARIANT_RNGPRO: "Renogy BT Battery Pro",
 }
 
 # Format: (register, word_count)
@@ -47,6 +54,9 @@ def detect_battery_variant(
     """Return the supported battery protocol variant for the given advertisement."""
     cleaned_name = (name or "").strip()
     manufacturer_data = manufacturer_data or {}
+
+    if cleaned_name.startswith(BATTERY_RNGPRO_NAME_PREFIXES):
+        return BATTERY_VARIANT_RNGPRO
 
     if cleaned_name.startswith(BATTERY_PRO_NAME_PREFIXES):
         return BATTERY_VARIANT_PRO
@@ -176,15 +186,16 @@ def parse_battery_cell_status(
     variant: BatteryVariant,
 ) -> dict[str, Any]:
     """Parse cell voltages and temperature sensors."""
-    _ = variant
     parsed: dict[str, Any] = {}
 
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
-    # Cell voltage registers are reported in millivolts.
+    # Cell voltage units differ by protocol variant: legacy/pro report
+    # millivolts, while RNGPRO-family batteries report 0.1 V units.
+    cell_divisor = 10 if variant == BATTERY_VARIANT_RNGPRO else 1000
     cell_values = [
-        int.from_bytes(data[start : start + 2], byteorder="big") / 1000
+        int.from_bytes(data[start : start + 2], byteorder="big") / cell_divisor
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
     ]
     if cell_values:
@@ -215,12 +226,20 @@ def parse_battery_mosfet_status(
     variant: BatteryVariant,
 ) -> dict[str, Any]:
     """Parse fault and MOSFET flags."""
-    _ = variant
-    problem_code = int.from_bytes(data[3:17], byteorder="big") & (~0xE)
-
-    return {
-        "battery_problem_code": problem_code,
+    parsed: dict[str, Any] = {
         "charge_mosfet_enabled": bool(data[16] & 0x2),
         "discharge_mosfet_enabled": bool(data[16] & 0x4),
         "heater_enabled": bool(data[17] & 0x20),
     }
+
+    # RNGPRO-family batteries do not expose the fault bitmask across the same
+    # 14-byte span; the generic decode picks up non-fault status bytes (e.g.
+    # 0xAA) and yields a spurious, permanently-nonzero value. Until the RNGPRO
+    # fault-register layout is characterized, omit the problem code so consumers
+    # represent it as unknown rather than falsely reporting no fault.
+    if variant != BATTERY_VARIANT_RNGPRO:
+        parsed["battery_problem_code"] = int.from_bytes(data[3:17], byteorder="big") & (
+            ~0xE
+        )
+
+    return parsed
