@@ -960,7 +960,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
     assert dummy_client.write_targets == [RENOGY_WRITE_CHAR_UUID] * 4
 
 
-def test_read_device_battery_continues_after_command_timeout(monkeypatch):
+def test_read_device_battery_stops_after_command_timeout(monkeypatch):
     class DummyClient:
         def __init__(self):
             self.is_connected = True
@@ -1023,6 +1023,7 @@ def test_read_device_battery_continues_after_command_timeout(monkeypatch):
         **_kwargs,
     ):
         if cmd_name == "battery cell_status":
+            _session.desynchronized = True
             raise asyncio.TimeoutError()
 
         return responses[cmd_name]
@@ -1048,10 +1049,12 @@ def test_read_device_battery_continues_after_command_timeout(monkeypatch):
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_LEGACY
     assert result.parsed_data["battery_voltage"] == 51.2
     assert result.parsed_data["battery_current"] == 12.34
-    assert result.parsed_data["charge_mosfet_enabled"] is True
     assert "battery_temperature" not in result.parsed_data
     assert device.name == "House Battery 1"
-    assert len(dummy_client.writes) == 4
+    # The poll stops at the timed-out command rather than issuing mosfet_status,
+    # because a late reply could be misread as that command's response.
+    assert "charge_mosfet_enabled" not in result.parsed_data
+    assert len(dummy_client.writes) == 3
     assert dummy_client.stop_notify_calls == 1
     assert dummy_client.disconnect_calls == 1
 
@@ -1379,6 +1382,89 @@ def test_persistent_session_reuses_connection_for_reads(monkeypatch):
     assert establish_calls == 1
     assert dummy_client.start_notify_calls == 1
     assert dummy_client.stop_notify_calls == 1
+    assert dummy_client.disconnect_calls == 1
+
+
+def test_read_device_stops_after_read_timeout_instead_of_misreading_reply(monkeypatch):
+    """A late reply must not be attributed to the command that follows it.
+
+    Modbus read responses carry no register address, so a reply that arrives
+    after its own command timed out is indistinguishable from the next
+    command's reply whenever both read the same number of words. The DCC reads
+    reverse_charging_voltage (0xE020) and solar_cutoff_current (0xE038) back to
+    back and both are single-word, which made a 12.7 V reading surface as a
+    solar cutoff current of 127.
+    """
+
+    def _single_word_frame(value: int) -> bytes:
+        payload = bytes(
+            [DEFAULT_DEVICE_ID, 0x03, 0x02, (value >> 8) & 0xFF, value & 0xFF]
+        )
+        crc_low, crc_high = modbus_crc(payload)
+        return payload + bytes([crc_low, crc_high])
+
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.stop_notify_calls = 0
+            self.requested_registers: list[int] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            register = (payload[2] << 8) | payload[3]
+            self.requested_registers.append(register)
+
+            if register == 57376:  # 0xE020: reply withheld, so the read times out.
+                return
+            if register == 57400:  # 0xE038: would be served 0xE020's late reply.
+                self._notify_handler(None, _single_word_frame(127))
+                return
+
+            self._notify_handler(None, _single_word_frame(5000))
+
+        async def stop_notify(self, *_args, **_kwargs):
+            self.stop_notify_calls += 1
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    dummy_client = DummyClient()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        commands={
+            "dcc": {
+                "current_limit": (3, 57345, 1),
+                "reverse_charging_voltage": (3, 57376, 1),
+                "solar_cutoff_current": (3, 57400, 1),
+            }
+        },
+        max_notification_wait_time=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(name="BT-TH-DCC01"), device_type="dcc")
+
+    result = asyncio.run(client.read_device(device))
+
+    # 0xE020's late reply must never be decoded as a solar cutoff current.
+    assert "solar_cutoff_current" not in result.parsed_data
+    # The poll stops at the timeout, so the stale reply is never collected.
+    assert dummy_client.requested_registers == [57345, 57376]
+    # Data read before the timeout is kept.
+    assert result.parsed_data["max_charging_current"] == 50.0
     assert dummy_client.disconnect_calls == 1
 
 
