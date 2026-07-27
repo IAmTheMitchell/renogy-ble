@@ -374,8 +374,9 @@ def test_dcc_reverse_charging_voltage_parsing():
 def test_dcc_solar_cutoff_current_parsing():
     """Test parsing DCC solar cutoff current from its dedicated register."""
     parser = RenogyBaseParser()
-    data = bytes([0xFF, 0x03, 0x02, 0x00, 0x07, 0x00, 0x00])  # 7A
+    # The device reports centiamps, like every other DCC current register.
+    data = bytes([0xFF, 0x03, 0x02, 0x02, 0xBC, 0x00, 0x00])  # 700 -> 7.0A
 
     result = parser.parse(data, "dcc", 57400)
 
-    assert result["solar_cutoff_current"] == 7
+    assert result["solar_cutoff_current"] == 7.0

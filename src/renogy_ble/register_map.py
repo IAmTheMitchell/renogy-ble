@@ -557,6 +557,7 @@ REGISTER_MAP: RegisterMap = {
             "register": 57400,  # 0xE038
             "length": 2,
             "byte_order": "big",
+            "scale": 0.01,  # Convert centiamps to amps
             "offset": 3,
         },
     },
