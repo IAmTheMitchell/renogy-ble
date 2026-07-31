@@ -134,37 +134,7 @@ Supported Renogy batteries use a dedicated command set and parser. Set
 `device_type="battery"`; the client detects the legacy, Battery Pro, or RNGPRO
 protocol variant from the BLE advertisement.
 
-```python
-import asyncio
-
-from bleak import BleakScanner
-
-from renogy_ble import RenogyBLEDevice, RenogyBleClient, is_supported_battery_name
-
-
-async def main() -> None:
-    devices = await BleakScanner.discover(return_adv=True)
-    ble_device, advertisement = next(
-        (device, advertisement)
-        for device, advertisement in devices.values()
-        if is_supported_battery_name(
-            device.name,
-            manufacturer_data=advertisement.manufacturer_data,
-        )
-    )
-
-    renogy_device = RenogyBLEDevice(
-        ble_device,
-        device_type="battery",
-        manufacturer_data=advertisement.manufacturer_data,
-    )
-    result = await RenogyBleClient().read_device(renogy_device)
-    print(result.parsed_data)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
+See the [battery usage guide](docs/batteries.md) for discovery and read examples.
 
 ### Smart Shunt 300 Reads
 

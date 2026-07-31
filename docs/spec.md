@@ -42,7 +42,8 @@ The package is organized around these modules:
 - `__init__.py`: supported public API exports
 
 `RenogyBleClient.read_device()` is the end-to-end entry point. It delegates
-according to `RenogyBLEDevice.device_type` and returns a `RenogyReadResult`.
+according to `RenogyBLEDevice.device_type` and returns a
+`RenogyBleReadResult`.
 
 `RenogyParser.parse()` is the lower-level entry point for callers that already
 have a complete Modbus response:
@@ -67,10 +68,11 @@ semantic names such as `battery_voltage`, `pv_power`, or
 `total_power_generation`. Parsers apply the scaling, signedness, mapping, and
 byte order defined by the relevant protocol implementation.
 
-Device-specific flows may retain stable data from earlier commands when one
-command in a multi-command read times out. Callers must inspect
-`RenogyReadResult.success` and `RenogyReadResult.error` rather than assuming
-that every read produced complete data.
+Multi-command controller and battery reads continue after an individual command
+times out. If at least one command succeeds, `RenogyBleReadResult.success` is
+`True` and `RenogyBleReadResult.error` is `None`, even though `parsed_data` may
+be incomplete. No completeness flag is currently exposed; callers that require
+a specific data set should validate the expected keys.
 
 ## Modbus Validation
 
