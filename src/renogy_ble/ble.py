@@ -435,6 +435,10 @@ class _PersistentBleSession:
     notify_started: bool = False
     read_target: int | str | None = None
     write_target: int | str | None = None
+    # Set when a read times out. The reply may still be in flight, and a Modbus
+    # read response carries no register address, so it cannot be told apart from
+    # the next command's reply. The session must be dropped rather than reused.
+    desynchronized: bool = False
 
 
 class RenogyBleClient:
@@ -552,7 +556,9 @@ class RenogyBleClient:
                             device_name=device.name,
                         )
                     except asyncio.TimeoutError:
-                        continue
+                        # The response stream is desynchronized; a late reply to
+                        # this command would be misread as the next command's.
+                        break
 
                     logger.debug(
                         "Received valid %s data length: %s",
@@ -589,7 +595,7 @@ class RenogyBleClient:
                 )
                 error = exc
 
-            if error is not None:
+            if error is not None or session.desynchronized:
                 await self._close_session(
                     device.address,
                     device.name,
@@ -694,7 +700,9 @@ class RenogyBleClient:
                             device_name=device.name,
                         )
                     except asyncio.TimeoutError:
-                        continue
+                        # See _read_device_data: a late reply cannot be matched
+                        # to its request, so stop using this session.
+                        break
 
                     parser = {
                         "device_info": parse_battery_device_info,
@@ -731,7 +739,7 @@ class RenogyBleClient:
                 )
                 error = exc
 
-            if error is not None:
+            if error is not None or session.desynchronized:
                 await self._close_session(
                     device.address,
                     device.name,
@@ -833,6 +841,10 @@ class RenogyBleClient:
                         retries=spec.retries,
                     )
                     if result_data is None:
+                        if session.desynchronized:
+                            # See _read_device_data: a late reply cannot be
+                            # matched to its request, so stop using this session.
+                            break
                         continue
 
                     parser = getattr(self, spec.parser_name)
@@ -864,7 +876,7 @@ class RenogyBleClient:
                 )
                 error = exc
 
-            if error is not None:
+            if error is not None or session.desynchronized:
                 await self._close_session(
                     device.address,
                     device.name,
@@ -1290,6 +1302,7 @@ class RenogyBleClient:
         session.notify_started = False
         session.read_target = None
         session.write_target = None
+        session.desynchronized = False
         self._reset_notifications(session)
 
         if remove:
@@ -1396,9 +1409,14 @@ class RenogyBleClient:
                     max(len(session.notification_data), expected_len),
                     device_name,
                 )
+                session.desynchronized = True
                 raise asyncio.TimeoutError()
 
-            await asyncio.wait_for(session.notification_event.wait(), remaining)
+            try:
+                await asyncio.wait_for(session.notification_event.wait(), remaining)
+            except asyncio.TimeoutError:
+                session.desynchronized = True
+                raise
             session.notification_event.clear()
 
     async def _wait_for_write_response(
