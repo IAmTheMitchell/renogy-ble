@@ -414,7 +414,7 @@ def test_dcc_status_block_parses_every_field():
     """
     from renogy_ble.parser import DCCParser
 
-    frame = bytes.fromhex("ff030e" "0002" "0000" "0000" "0000" "010b" "0004" "0000")
+    frame = bytes.fromhex("ff030e0002000000000000010b00040000")
     parsed = DCCParser().parse_data(frame, register=288)
 
     assert parsed["charging_status"] == "mppt"
