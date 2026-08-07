@@ -380,3 +380,46 @@ def test_dcc_solar_cutoff_current_parsing():
     result = parser.parse(data, "dcc", 57400)
 
     assert result["solar_cutoff_current"] == 7.0
+
+
+def test_every_dcc_field_is_reachable_by_some_command():
+    """A field must live under a register some command actually asks for.
+
+    ``RenogyBaseParser.parse`` matches a field to a response by exact start
+    register, and the only call site passes a command's *start* register. A
+    field declared under any other register is therefore unreachable on every
+    device -- it can never appear in parsed output.
+    """
+    from renogy_ble.ble import COMMANDS
+    from renogy_ble.register_map import REGISTER_MAP
+
+    starts = {register for _fn, register, _words in COMMANDS["dcc"].values()}
+    orphans = {
+        name: field["register"]
+        for name, field in REGISTER_MAP["dcc"].items()
+        if field.get("register") not in starts
+    }
+    assert not orphans, f"unreachable DCC fields: {orphans}"
+
+
+def test_dcc_status_block_parses_every_field():
+    """Parse a real status frame captured from a DCC50S (RBC2125DS-21W-).
+
+    ff 03 0e | 0002 0000 0000 0000 010b 0004 0000
+    addr/fn/len then 7 words. The 267 W in ``output_power`` was corroborated
+    live by ``alternator_power`` reading 265 W at the same moment, and
+    ``charging_mode`` 4 (solar_alternator_to_house) agreed with
+    ``charging_status`` 2 (mppt) -- two registers telling the same story,
+    which is what pins the byte offsets.
+    """
+    from renogy_ble.parser import DCCParser
+
+    frame = bytes.fromhex("ff030e0002000000000000010b00040000")
+    parsed = DCCParser().parse_data(frame, register=288)
+
+    assert parsed["charging_status"] == "mppt"
+    assert parsed["fault_high"] == 0
+    assert parsed["fault_low"] == 0
+    assert parsed["output_power"] == 267
+    assert parsed["charging_mode"] == "solar_alternator_to_house"
+    assert parsed["ignition_status"] == "disconnected"

@@ -380,27 +380,27 @@ REGISTER_MAP: RegisterMap = {
         },
         # Fault information (register 289-290 / 0x0121-0x0122)
         "fault_high": {
-            "register": 289,
+            "register": 288,
             "length": 2,
             "byte_order": "big",
-            "offset": 3,
+            "offset": 5,
         },
         "fault_low": {
-            "register": 290,
+            "register": 288,
             "length": 2,
             "byte_order": "big",
-            "offset": 3,
+            "offset": 7,
         },
         # Output power (register 292 / 0x0124)
         "output_power": {
-            "register": 292,
+            "register": 288,
             "length": 2,
             "byte_order": "big",
-            "offset": 3,
+            "offset": 11,
         },
         # Charging mode (register 293 / 0x0125)
         "charging_mode": {
-            "register": 293,
+            "register": 288,
             "length": 2,
             "byte_order": "big",
             "map": {
@@ -411,15 +411,15 @@ REGISTER_MAP: RegisterMap = {
                 4: "solar_alternator_to_house",
                 5: "solar_to_starter",
             },
-            "offset": 3,
+            "offset": 13,
         },
         # Ignition signal (register 294 / 0x0126)
         "ignition_status": {
-            "register": 294,
+            "register": 288,
             "length": 2,
             "byte_order": "big",
             "map": {0: "disconnected", 1: "connected"},
-            "offset": 3,
+            "offset": 15,
         },
         # Maximum charging current (register 57345 / 0xE001)
         # Stored as centiamps (100x), so 4000 = 40A
