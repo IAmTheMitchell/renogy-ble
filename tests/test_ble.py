@@ -16,6 +16,7 @@ from renogy_ble.ble import (
     BleakError,
     RenogyBleClient,
     RenogyBLEDevice,
+    RenogyBleReadResult,
     clean_device_name,
     create_modbus_read_request,
     create_modbus_write_request,
@@ -1466,6 +1467,106 @@ def test_read_device_stops_after_read_timeout_instead_of_misreading_reply(monkey
     # Data read before the timeout is kept.
     assert result.parsed_data["max_charging_current"] == 50.0
     assert dummy_client.disconnect_calls == 1
+
+
+def test_read_timeout_reconnects_before_next_persistent_session_poll(monkeypatch):
+    """A timed-out persistent session must not be reused by the next poll."""
+
+    clients = []
+
+    class DummyClient:
+        def __init__(self, connection_number: int):
+            self.connection_number = connection_number
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self.requested_registers: list[int] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            register = (payload[2] << 8) | payload[3]
+            self.requested_registers.append(register)
+
+            if self.connection_number == 1:
+                if self.requested_registers == [0]:
+                    self._notify_handler(
+                        None, _modbus_read_response(DEFAULT_DEVICE_ID, [100])
+                    )
+                elif self.requested_registers == [0, 1]:
+                    return
+                elif self.requested_registers == [0, 1, 0]:
+                    # This is register 1's late reply. If the timed-out session
+                    # is reused, it is indistinguishable from register 0's reply.
+                    self._notify_handler(
+                        None, _modbus_read_response(DEFAULT_DEVICE_ID, [200])
+                    )
+                else:
+                    self._notify_handler(
+                        None, _modbus_read_response(DEFAULT_DEVICE_ID, [400])
+                    )
+                return
+
+            response_value = 300 if register == 0 else 400
+            self._notify_handler(
+                None, _modbus_read_response(DEFAULT_DEVICE_ID, [response_value])
+            )
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client = DummyClient(len(clients) + 1)
+        clients.append(dummy_client)
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        commands={"test_device": {"first": (3, 0, 1), "second": (3, 1, 1)}},
+        max_notification_wait_time=0.01,
+        transport_mode="persistent_session",
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="test_device")
+    parsed_values: list[tuple[int, int]] = []
+
+    def _update_parsed_data(
+        raw_data: bytes, register: int, cmd_name: str = "unknown"
+    ) -> bool:
+        _ = cmd_name
+        parsed_values.append((register, int.from_bytes(raw_data[3:5], "big")))
+        return True
+
+    monkeypatch.setattr(device, "update_parsed_data", _update_parsed_data)
+
+    async def _run() -> tuple[RenogyBleReadResult, RenogyBleReadResult]:
+        first = await client.read_device(device)
+        second = await client.read_device(device)
+        await client.close_device(device)
+        return first, second
+
+    first_result, second_result = asyncio.run(_run())
+
+    assert first_result.success is True
+    assert first_result.error is None
+    assert second_result.success is True
+    assert second_result.error is None
+    assert len(clients) == 2
+    assert clients[0].requested_registers == [0, 1]
+    assert clients[0].disconnect_calls == 1
+    assert clients[1].requested_registers == [0, 1]
+    assert clients[1].disconnect_calls == 1
+    assert parsed_values == [(0, 100), (0, 300), (1, 400)]
 
 
 def test_read_device_uses_valid_frame_when_notification_has_prefixed_junk(monkeypatch):

@@ -1412,7 +1412,11 @@ class RenogyBleClient:
                 session.desynchronized = True
                 raise asyncio.TimeoutError()
 
-            await asyncio.wait_for(session.notification_event.wait(), remaining)
+            try:
+                await asyncio.wait_for(session.notification_event.wait(), remaining)
+            except asyncio.TimeoutError:
+                session.desynchronized = True
+                raise
             session.notification_event.clear()
 
     async def _wait_for_write_response(
