@@ -4,8 +4,8 @@ Thanks for contributing.
 
 Start here:
 
-- Read [`AGENTS.md`](AGENTS.md) for repository-specific guardrails.
-- Read [`README.md`](README.md) for library purpose, supported devices, and usage.
+- Read [`AGENTS.md`](../AGENTS.md) for repository-specific guardrails.
+- Read [`README.md`](../README.md) for library purpose, supported devices, and usage.
 
 ## Scope and Boundaries
 

@@ -10,17 +10,22 @@ and parsing their Modbus responses.
 
 Library for communicating with Renogy devices over BLE using BT-1 and BT-2
 Bluetooth modules for controller-style devices, plus direct BLE communication
-for Renogy inverters and Smart Shunt 300 devices.
+for supported Renogy batteries, inverters, and Smart Shunt 300 devices.
 
 Currently supported devices:
 
 - Renogy charge controllers (such as Rover, Wanderer, Adventurer)
+- Renogy DC-DC chargers that use the controller-style Modbus protocol
+- Renogy batteries using legacy, Battery Pro, or RNGPRO protocols
 - Renogy inverters
 - Renogy Smart Shunt 300
 
-Future planned support:
+Supported battery advertisements include:
 
-- Renogy batteries
+- Legacy `BT-TH-*` names containing `BATT` or `BATTERY`
+- Battery Pro names beginning with `RNGRBP` or `RNGC`
+- RNGPRO-family names beginning with `RNGPRO`
+- Battery Pro advertisements containing manufacturer ID `0xE14C`
 
 ## Installation
 
@@ -123,6 +128,14 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Battery Reads
+
+Supported Renogy batteries use a dedicated command set and parser. Set
+`device_type="battery"`; the client detects the legacy, Battery Pro, or RNGPRO
+protocol variant from the BLE advertisement.
+
+See the [battery usage guide](docs/batteries.md) for discovery and read examples.
+
 ### Smart Shunt 300 Reads
 
 Smart Shunt 300 devices do not use the same Modbus command flow as Renogy
@@ -186,6 +199,7 @@ client = RenogyBleClient(device_id=0xFF, commands=custom_commands)
 ## Features
 
 - Connects to Renogy BLE devices and reads Modbus registers
+- Connects to supported Renogy batteries and detects their protocol variant
 - Connects to Renogy inverter devices and reads inverter-specific Modbus registers
 - Connects to Renogy Smart Shunt 300 devices and parses BLE notifications
 - Builds Modbus read requests with CRC framing
