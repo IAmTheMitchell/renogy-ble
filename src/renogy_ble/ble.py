@@ -49,6 +49,15 @@ MAX_NOTIFICATION_WAIT_TIME = 2.0
 # Default device ID for Renogy devices
 DEFAULT_DEVICE_ID = 0xFF
 INVERTER_DEVICE_ID = 0x20
+RIV4835CSH1S_MODEL = "RIV4835CSH1S"
+RIV4835CSH1S_CHARGING_STATES = {
+    0: "deactivated",
+    1: "constant current",
+    2: "constant voltage",
+    4: "floating",
+    6: "battery activation",
+    7: "battery disconnecting",
+}
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
@@ -199,6 +208,7 @@ class RenogyBLEDevice:
         advertisement_rssi: Optional[int] = None,
         device_type: str = DEFAULT_DEVICE_TYPE,
         manufacturer_data: dict[int, bytes] | None = None,
+        model_hint: str | None = None,
     ):
         """Initialize the Renogy BLE device."""
         self.ble_device = ble_device
@@ -219,6 +229,7 @@ class RenogyBLEDevice:
         self.available = True
         self.parsed_data: dict[str, Any] = {}
         self.device_type = device_type
+        self.model_hint = model_hint
         self.last_unavailable_time: Optional[datetime] = None
         self.battery_variant: BatteryVariant | None = (
             detect_battery_variant(self.name, manufacturer_data=self.manufacturer_data)
@@ -758,6 +769,41 @@ class RenogyBleClient:
                 any_command_succeeded, dict(device.parsed_data), error
             )
 
+    @staticmethod
+    def _inverter_read_specs(
+        model_hint: str | None,
+    ) -> tuple[_InverterReadSpec, ...]:
+        """Return the inverter register profile for a known model."""
+        if model_hint == RIV4835CSH1S_MODEL:
+            return (
+                _InverterReadSpec(4000, 10, "_parse_inverter_main_response", retries=2),
+                _InverterReadSpec(
+                    4109,
+                    1,
+                    "_parse_inverter_device_id_response",
+                    cache_key="device_id",
+                ),
+                _InverterReadSpec(4327, 7, "_parse_riv4835csh1s_charging_response"),
+                _InverterReadSpec(4408, 6, "_parse_riv4835csh1s_load_response"),
+            )
+
+        return (
+            _InverterReadSpec(4000, 32, "_parse_inverter_main_response", retries=2),
+            _InverterReadSpec(4408, 6, "_parse_inverter_load_response"),
+            _InverterReadSpec(
+                4109,
+                1,
+                "_parse_inverter_device_id_response",
+                cache_key="device_id",
+            ),
+            _InverterReadSpec(
+                4311,
+                8,
+                "_parse_inverter_model_response",
+                cache_key="model",
+            ),
+        )
+
     async def _read_inverter_device(
         self, device: RenogyBLEDevice
     ) -> RenogyBleReadResult:
@@ -802,24 +848,11 @@ class RenogyBleClient:
                     )
 
                 parsed_updates: dict[str, Any] = {}
-                read_specs = (
-                    _InverterReadSpec(
-                        4000, 32, "_parse_inverter_main_response", retries=2
-                    ),
-                    _InverterReadSpec(4408, 6, "_parse_inverter_load_response"),
-                    _InverterReadSpec(
-                        4109,
-                        1,
-                        "_parse_inverter_device_id_response",
-                        cache_key="device_id",
-                    ),
-                    _InverterReadSpec(
-                        4311,
-                        8,
-                        "_parse_inverter_model_response",
-                        cache_key="model",
-                    ),
-                )
+                read_specs = self._inverter_read_specs(device.model_hint)
+                if device.model_hint == RIV4835CSH1S_MODEL:
+                    # Register 4311 does not respond on this model, so retain the
+                    # caller-supplied model identity instead of probing for it.
+                    parsed_updates["model"] = RIV4835CSH1S_MODEL
 
                 for index, spec in enumerate(read_specs):
                     if index > 0:
@@ -969,6 +1002,63 @@ class RenogyBleClient:
             "battery_voltage": values[5] * 0.1,
             "temperature": values[6] * 0.1,
             "input_frequency": values[9] * 0.01,
+        }
+
+    @staticmethod
+    def _parse_riv4835csh1s_charging_response(data: bytes) -> dict[str, Any]:
+        """Parse RIV4835CSH1S register 4327 charging and PV telemetry."""
+        if len(data) < 19:
+            logger.warning(
+                "RIV4835CSH1S charging response too short: %d bytes", len(data)
+            )
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 7:
+            logger.warning("Not enough RIV4835CSH1S charging values: %d", len(values))
+            return {}
+
+        battery_current_raw = values[1]
+        if battery_current_raw & 0x8000:
+            battery_current_raw -= 0x10000
+
+        return {
+            "battery_percentage": values[0],
+            # RIV4835CSH1S convention: positive is discharge, negative is charge.
+            "battery_current": battery_current_raw * 0.1,
+            "pv_voltage": values[2] * 0.1,
+            "pv_current": values[3] * 0.1,
+            "pv_power": values[4],
+            "charging_status": RIV4835CSH1S_CHARGING_STATES.get(
+                values[5], f"unknown ({values[5]})"
+            ),
+            "charging_power": values[6],
+        }
+
+    @staticmethod
+    def _parse_riv4835csh1s_load_response(data: bytes) -> dict[str, Any]:
+        """Parse RIV4835CSH1S register 4408 load and line-charge telemetry."""
+        if len(data) < 17:
+            logger.warning("RIV4835CSH1S load response too short: %d bytes", len(data))
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 6:
+            logger.warning("Not enough RIV4835CSH1S load values: %d", len(values))
+            return {}
+
+        return {
+            "load_current": values[0] * 0.1,
+            "load_active_power": values[1],
+            "load_apparent_power": values[2],
+            "line_charging_current": values[4] * 0.1,
+            "load_percentage": values[5],
         }
 
     @staticmethod
