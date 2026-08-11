@@ -196,6 +196,17 @@ def test_parse_data(controller_parser):
         mock_parse.assert_called_once_with(data, "controller", 256)
 
 
+def test_parser_dispatch_reuses_parser_instance():
+    """The parser facade should not rebuild register indexes for every response."""
+    from renogy_ble.renogy_parser import _PARSERS, RenogyParser
+
+    with patch.object(_PARSERS["controller"], "parse_data", return_value={}) as parse:
+        RenogyParser.parse(b"first", "controller", 12)
+        RenogyParser.parse(b"second", "controller", 26)
+
+    assert parse.call_count == 2
+
+
 @pytest.fixture
 def integration_test_data():
     """Fixture that provides real sample data for integration tests."""
