@@ -171,6 +171,22 @@ def test_parse_partial_data():
         logger.removeHandler(log_handler)
 
 
+def test_register_map_assignment_rebuilds_index(base_parser):
+    """Replacing the public register map should update the parser index."""
+    base_parser.register_map = {
+        "custom": {
+            "value": {
+                "register": 1,
+                "length": 1,
+                "byte_order": "big",
+                "offset": 0,
+            }
+        }
+    }
+
+    assert base_parser.parse(b"\x2a", "custom", 1) == {"value": 42}
+
+
 @pytest.fixture
 def controller_parser():
     """Fixture that returns a ControllerParser instance."""

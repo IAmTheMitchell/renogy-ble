@@ -114,8 +114,18 @@ class RenogyBaseParser:
 
     def __init__(self) -> None:
         """Initialize the parser with the register map."""
-        self.register_map: RegisterMap = REGISTER_MAP
-        self._fields_by_register = _index_register_fields(self.register_map)
+        self.register_map = REGISTER_MAP
+
+    @property
+    def register_map(self) -> RegisterMap:
+        """Return the register map used by this parser."""
+        return self._register_map
+
+    @register_map.setter
+    def register_map(self, value: RegisterMap) -> None:
+        """Replace the register map and rebuild its parser index."""
+        self._register_map = value
+        self._fields_by_register = _index_register_fields(value)
 
     def parse(
         self, data: bytes, model: str, register: int
