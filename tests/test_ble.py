@@ -843,7 +843,18 @@ def test_read_device_falls_back_to_legacy_variant_for_manual_bt_th_battery(
     assert [request[0] for request in dummy_client.writes] == [0x30] * 4
 
 
-def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monkeypatch):
+@pytest.mark.parametrize(
+    ("write_properties", "expected_response"),
+    [
+        (["write-without-response"], False),
+        (["write"], True),
+    ],
+)
+def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(
+    monkeypatch,
+    write_properties: list[str],
+    expected_response: bool,
+):
     class DummyCharacteristic:
         def __init__(self, uuid: str, handle: int, properties: list[str]):
             self.uuid = uuid
@@ -862,6 +873,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
             self.stop_notify_calls = 0
             self.start_notify_targets: list[int | str] = []
             self.write_targets: list[int | str] = []
+            self.write_responses: list[bool | None] = []
             self._notify_handler: Callable[[object | None, bytes], None] | None = None
             self.services = [
                 DummyService(
@@ -870,7 +882,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
                         DummyCharacteristic(
                             "0000ffd1-0000-1000-8000-00805f9b34fb",
                             17,
-                            ["write-without-response"],
+                            write_properties,
                         )
                     ],
                 ),
@@ -896,6 +908,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
 
             request = bytes(payload)
             self.write_targets.append(target)
+            self.write_responses.append(response)
             register = int.from_bytes(request[2:4], "big")
 
             def _frame(device_id: int, payload_bytes: bytes) -> bytes:
@@ -964,9 +977,10 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(monke
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
     assert dummy_client.start_notify_targets[0] == 33
     assert dummy_client.write_targets == [17] * 4
+    assert dummy_client.write_responses == [expected_response] * 4
 
 
-def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
+def test_read_device_falls_back_to_uuid_when_battery_services_do_not_all_match(
     monkeypatch,
 ):
     class DummyCharacteristic:
@@ -987,15 +1001,16 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
             self.stop_notify_calls = 0
             self.start_notify_targets: list[int | str] = []
             self.write_targets: list[int | str] = []
+            self.write_responses: list[bool | None] = []
             self._notify_handler: Callable[[object | None, bytes], None] | None = None
             self.services = [
                 DummyService(
-                    "00001234-0000-1000-8000-00805f9b34fb",
+                    "0000ffd0-0000-1000-8000-00805f9b34fb",
                     [
                         DummyCharacteristic(
                             "0000ffd1-0000-1000-8000-00805f9b34fb",
                             17,
-                            ["write-without-response"],
+                            ["write"],
                         )
                     ],
                 ),
@@ -1021,6 +1036,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
 
             request = bytes(payload)
             self.write_targets.append(target)
+            self.write_responses.append(response)
             register = int.from_bytes(request[2:4], "big")
 
             def _frame(device_id: int, payload_bytes: bytes) -> bytes:
@@ -1089,6 +1105,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_match(
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
     assert dummy_client.start_notify_targets[0] == RENOGY_READ_CHAR_UUID
     assert dummy_client.write_targets == [RENOGY_WRITE_CHAR_UUID] * 4
+    assert dummy_client.write_responses == [True] * 4
 
 
 def test_read_device_battery_stops_after_command_timeout(monkeypatch):

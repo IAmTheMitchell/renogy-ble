@@ -25,6 +25,7 @@ from renogy_ble.battery import (
     BatteryVariant,
     build_battery_command,
     detect_battery_variant,
+    is_rngr_bp_battery_name,
     parse_battery_cell_status,
     parse_battery_device_info,
     parse_battery_mosfet_status,
@@ -215,6 +216,7 @@ class RenogyBLEDevice:
         self.address = ble_device.address
 
         cleaned_name = clean_device_name(ble_device.name)
+        self.advertised_name = cleaned_name
         self.name = cleaned_name or "Unknown Renogy Device"
 
         # Use the provided advertisement RSSI if available, otherwise set to None.
@@ -449,6 +451,7 @@ class _PersistentBleSession:
     # read response carries no register address, so it cannot be told apart from
     # the next command's reply. The session must be dropped rather than reused.
     desynchronized: bool = False
+    write_with_response: bool | None = None
 
 
 class RenogyBleClient:
@@ -696,16 +699,12 @@ class RenogyBleClient:
                         raise RuntimeError("BLE session is not connected")
 
                     request = build_battery_command(variant, register, word_count)
-                    # Renogy batteries' ffd1 write characteristic only accepts
-                    # BLE Write-Without-Response. A default (with-response) write
-                    # is rejected by the pack with ATT 0x0E "Unlikely Error",
-                    # which previously failed every battery poll. Confirmed on
-                    # RNGRBP (RBT12200LFP-BT) hardware, and matches DC Home's own
-                    # WRITE_NO_RESPONSE selection.
+                    # RNGRBP requires Write-Without-Response; other families use
+                    # the mode supported by their resolved characteristic.
                     await session.client.write_gatt_char(
                         session.write_target or self._write_char_uuid,
                         request,
-                        response=False,
+                        response=session.write_with_response,
                     )
                     try:
                         result_data = await self._wait_for_valid_read_response(
@@ -1273,6 +1272,9 @@ class RenogyBleClient:
             self._reset_notifications(session)
             session.read_target = self._read_char_uuid
             session.write_target = self._write_char_uuid
+            session.write_with_response = (
+                False if is_rngr_bp_battery_name(device.advertised_name) else None
+            )
             if device.device_type == BATTERY_DEVICE_TYPE:
                 self._resolve_battery_characteristics(device, session)
 
@@ -1308,6 +1310,7 @@ class RenogyBleClient:
 
         notify_handle = None
         write_handle = None
+        write_with_response = session.write_with_response
         notify_service_uuid = normalize_uuid_str(RENOGY_NOTIFY_SERVICE_UUID)
         write_service_uuid = normalize_uuid_str(RENOGY_WRITE_SERVICE_UUID)
         notify_char_uuid = normalize_uuid_str(self._read_char_uuid)
@@ -1324,12 +1327,21 @@ class RenogyBleClient:
                     and {"write", "write-without-response"} & properties
                 ):
                     write_handle = characteristic.handle
+                    if "write-without-response" in properties and (
+                        write_with_response is False or "write" not in properties
+                    ):
+                        write_with_response = False
+                    else:
+                        write_with_response = True
                 if (
                     service_uuid == notify_service_uuid
                     and char_uuid == notify_char_uuid
                     and "notify" in properties
                 ):
                     notify_handle = characteristic.handle
+
+        if write_handle is not None:
+            session.write_with_response = write_with_response
 
         if notify_handle is None or write_handle is None:
             logger.debug(
@@ -1380,6 +1392,7 @@ class RenogyBleClient:
         session.read_target = None
         session.write_target = None
         session.desynchronized = False
+        session.write_with_response = None
         self._reset_notifications(session)
 
         if remove:

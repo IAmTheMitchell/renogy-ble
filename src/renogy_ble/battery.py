@@ -14,7 +14,8 @@ BATTERY_VARIANT_PRO = "pro"
 BATTERY_VARIANT_RNGPRO = "rngpro"
 BatteryVariant = Literal["legacy", "pro", "rngpro"]
 
-BATTERY_PRO_NAME_PREFIXES = ("RNGRBP", "RNGC")
+BATTERY_RNGRBP_NAME_PREFIX = "RNGRBP"
+BATTERY_PRO_NAME_PREFIXES = (BATTERY_RNGRBP_NAME_PREFIX, "RNGC")
 BATTERY_RNGPRO_NAME_PREFIXES = ("RNGPRO",)
 BATTERY_LEGACY_NAME_PREFIX = "BT-TH-"
 BATTERY_LEGACY_NAME_MARKERS = ("BATT", "BATTERY")
@@ -44,6 +45,11 @@ BATTERY_COMMANDS: dict[str, tuple[int, int]] = {
 def clean_battery_text(value: bytes) -> str:
     """Decode ASCII battery metadata and strip padding."""
     return value.decode("ascii", errors="ignore").strip("\x00").strip()
+
+
+def is_rngr_bp_battery_name(name: str | None) -> bool:
+    """Return whether an advertisement belongs to the RNGRBP family."""
+    return (name or "").strip().startswith(BATTERY_RNGRBP_NAME_PREFIX)
 
 
 def detect_battery_variant(
