@@ -10,8 +10,8 @@ from renogy_ble.register_map import REGISTER_MAP
 logger = logging.getLogger(__name__)
 
 _PARSERS = {
-    "controller": ControllerParser(),
-    "dcc": DCCParser(),
+    "controller": ControllerParser(_cache_register_fields=True),
+    "dcc": DCCParser(_cache_register_fields=True),
 }
 
 

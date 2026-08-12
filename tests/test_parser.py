@@ -13,6 +13,7 @@ import pytest
 
 # Import the modules to be tested
 from renogy_ble.parser import ControllerParser, DCCParser, RenogyBaseParser, parse_value
+from renogy_ble.register_map import RegisterMap
 
 
 def test_parse_value_big_endian():
@@ -171,8 +172,26 @@ def test_parse_partial_data():
         logger.removeHandler(log_handler)
 
 
-def test_register_map_assignment_rebuilds_index(base_parser):
-    """Replacing the public register map should update the parser index."""
+def test_register_map_assignment_rebuilds_index():
+    """Replacing the public register map should update an enabled parser index."""
+    parser = RenogyBaseParser(_cache_register_fields=True)
+    register_map: RegisterMap = {
+        "custom": {
+            "value": {
+                "register": 1,
+                "length": 1,
+                "byte_order": "big",
+                "offset": 0,
+            }
+        }
+    }
+    parser.register_map = register_map
+
+    assert parser.parse(b"\x2a", "custom", 1) == {"value": 42}
+
+
+def test_register_map_in_place_mutation_remains_visible(base_parser):
+    """Direct parser instances should retain their live register-map behavior."""
     base_parser.register_map = {
         "custom": {
             "value": {
@@ -184,7 +203,10 @@ def test_register_map_assignment_rebuilds_index(base_parser):
         }
     }
 
-    assert base_parser.parse(b"\x2a", "custom", 1) == {"value": 42}
+    base_parser.register_map["custom"]["value"]["register"] = 2
+
+    assert base_parser.parse(b"\x2a", "custom", 1) == {}
+    assert base_parser.parse(b"\x2a", "custom", 2) == {"value": 42}
 
 
 @pytest.fixture
@@ -243,7 +265,10 @@ def test_parser_dispatch_reuses_parser_instance():
     """The parser facade should not rebuild register indexes for every response."""
     from renogy_ble.renogy_parser import _PARSERS, RenogyParser
 
-    with patch.object(_PARSERS["controller"], "parse_data", return_value={}) as parse:
+    parser = _PARSERS["controller"]
+    assert parser._fields_by_register is not None
+
+    with patch.object(parser, "parse_data", return_value={}) as parse:
         RenogyParser.parse(b"first", "controller", 12)
         RenogyParser.parse(b"second", "controller", 26)
 

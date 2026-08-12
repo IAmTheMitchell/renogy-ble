@@ -112,9 +112,12 @@ class RenogyBaseParser:
     using the register mappings defined in register_map.py.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, _cache_register_fields: bool = False) -> None:
         """Initialize the parser with the register map."""
+        self._fields_by_register: _RegisterFields | None = None
         self.register_map = REGISTER_MAP
+        if _cache_register_fields:
+            self._fields_by_register = _index_register_fields(self.register_map)
 
     @property
     def register_map(self) -> RegisterMap:
@@ -123,9 +126,10 @@ class RenogyBaseParser:
 
     @register_map.setter
     def register_map(self, value: RegisterMap) -> None:
-        """Replace the register map and rebuild its parser index."""
+        """Replace the register map and rebuild an enabled parser index."""
         self._register_map = value
-        self._fields_by_register = _index_register_fields(value)
+        if self._fields_by_register is not None:
+            self._fields_by_register = _index_register_fields(value)
 
     def parse(
         self, data: bytes, model: str, register: int
@@ -144,12 +148,20 @@ class RenogyBaseParser:
         """
         result: dict[str, int | float | str] = {}
 
-        fields_by_register = self._fields_by_register.get(model)
-        if fields_by_register is None:
+        if model not in self.register_map:
             logger.warning("Unsupported model: %s", model)
             return result
 
-        for field_name, field_info in fields_by_register.get(register, ()):
+        if self._fields_by_register is None:
+            fields = (
+                (field_name, field_info)
+                for field_name, field_info in self.register_map[model].items()
+                if field_info.get("register") == register
+            )
+        else:
+            fields = self._fields_by_register.get(model, {}).get(register, ())
+
+        for field_name, field_info in fields:
             offset = field_info["offset"]
             length = field_info["length"]
             byte_order = field_info["byte_order"]
