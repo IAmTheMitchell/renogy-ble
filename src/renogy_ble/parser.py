@@ -195,6 +195,16 @@ class RenogyDeviceParser(RenogyBaseParser):
 
     device_type: str
 
+    @property
+    def type(self) -> str:
+        """Return the device type using the legacy public attribute name."""
+        return self.device_type
+
+    @type.setter
+    def type(self, value: str) -> None:
+        """Update the device type using the legacy public attribute name."""
+        self.device_type = value
+
     def parse_data(
         self, data: bytes, register: int | None = None
     ) -> dict[str, int | float | str]:

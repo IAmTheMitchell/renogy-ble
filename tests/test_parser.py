@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 # Import the modules to be tested
-from renogy_ble.parser import ControllerParser, RenogyBaseParser, parse_value
+from renogy_ble.parser import ControllerParser, DCCParser, RenogyBaseParser, parse_value
 
 
 def test_parse_value_big_endian():
@@ -194,6 +194,33 @@ def test_parse_data(controller_parser):
 
         # Check that parse was called with the correct arguments
         mock_parse.assert_called_once_with(data, "controller", 256)
+
+
+@pytest.mark.parametrize(
+    ("parser_class", "device_type"),
+    [(ControllerParser, "controller"), (DCCParser, "dcc")],
+)
+def test_parser_type_alias(parser_class, device_type):
+    """Keep the legacy type attribute synchronized with device_type."""
+    parser = parser_class()
+
+    assert parser.type == device_type
+
+    parser.type = "custom"
+    assert parser.device_type == "custom"
+
+    parser.device_type = device_type
+    assert parser.type == device_type
+
+
+def test_parse_data_honors_type_override(controller_parser):
+    """Direct consumers can continue overriding the legacy type attribute."""
+    controller_parser.type = "dcc"
+
+    with patch.object(ControllerParser, "parse", return_value={}) as mock_parse:
+        controller_parser.parse_data(b"data", register=256)
+
+    mock_parse.assert_called_once_with(b"data", "dcc", 256)
 
 
 def test_parser_dispatch_reuses_parser_instance():
