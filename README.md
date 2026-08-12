@@ -82,9 +82,7 @@ from renogy_ble import RenogyBLEDevice, RenogyBleClient
 
 async def main() -> None:
     devices = await BleakScanner.discover()
-    ble_device = next(
-        device for device in devices if "Renogy" in (device.name or "")
-    )
+    ble_device = next(device for device in devices if "Renogy" in (device.name or ""))
 
     renogy_device = RenogyBLEDevice(ble_device, device_type="controller")
     client = RenogyBleClient()
@@ -225,7 +223,7 @@ Returns a flat dictionary of parsed values:
 {
     "battery_voltage": 12.9,
     "pv_power": 250,
-    "charging_status": "mppt"  # Mapped from numeric values where applicable
+    "charging_status": "mppt",  # Mapped from numeric values where applicable
 }
 ```
 

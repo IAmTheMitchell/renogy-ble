@@ -8,10 +8,29 @@ according to the register mappings defined in register_map.py
 import logging
 from typing import Literal
 
-from renogy_ble.register_map import REGISTER_MAP, RegisterMap
+from renogy_ble.register_map import REGISTER_MAP, FieldInfo, RegisterMap
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+
+_RegisterFields = dict[str, dict[int, tuple[tuple[str, FieldInfo], ...]]]
+
+
+def _index_register_fields(register_map: RegisterMap) -> _RegisterFields:
+    """Group parser fields by model and command start register."""
+    indexed_fields: _RegisterFields = {}
+    for model, model_map in register_map.items():
+        fields_by_register: dict[int, list[tuple[str, FieldInfo]]] = {}
+        for field_name, field_info in model_map.items():
+            register = field_info.get("register")
+            if register is not None:
+                fields_by_register.setdefault(register, []).append(
+                    (field_name, field_info)
+                )
+        indexed_fields[model] = {
+            register: tuple(fields) for register, fields in fields_by_register.items()
+        }
+    return indexed_fields
 
 
 def parse_value(
@@ -93,9 +112,24 @@ class RenogyBaseParser:
     using the register mappings defined in register_map.py.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, _cache_register_fields: bool = False) -> None:
         """Initialize the parser with the register map."""
-        self.register_map: RegisterMap = REGISTER_MAP
+        self._fields_by_register: _RegisterFields | None = None
+        self.register_map = REGISTER_MAP
+        if _cache_register_fields:
+            self._fields_by_register = _index_register_fields(self.register_map)
+
+    @property
+    def register_map(self) -> RegisterMap:
+        """Return the register map used by this parser."""
+        return self._register_map
+
+    @register_map.setter
+    def register_map(self, value: RegisterMap) -> None:
+        """Replace the register map and rebuild an enabled parser index."""
+        self._register_map = value
+        if self._fields_by_register is not None:
+            self._fields_by_register = _index_register_fields(value)
 
     def parse(
         self, data: bytes, model: str, register: int
@@ -114,18 +148,20 @@ class RenogyBaseParser:
         """
         result: dict[str, int | float | str] = {}
 
-        # Check if the model exists in our register map
         if model not in self.register_map:
             logger.warning("Unsupported model: %s", model)
             return result
 
-        model_map = self.register_map[model]
+        if self._fields_by_register is None:
+            fields = (
+                (field_name, field_info)
+                for field_name, field_info in self.register_map[model].items()
+                if field_info.get("register") == register
+            )
+        else:
+            fields = self._fields_by_register.get(model, {}).get(register, ())
 
-        # Iterate through fields in the model map that belong to the given register.
-        for field_name, field_info in model_map.items():
-            if field_info.get("register") != register:
-                continue
-
+        for field_name, field_info in fields:
             offset = field_info["offset"]
             length = field_info["length"]
             byte_order = field_info["byte_order"]
@@ -176,7 +212,33 @@ class RenogyBaseParser:
         return result
 
 
-class ControllerParser(RenogyBaseParser):
+class RenogyDeviceParser(RenogyBaseParser):
+    """Parse register data for one configured Renogy device type."""
+
+    device_type: str
+
+    @property
+    def type(self) -> str:
+        """Return the device type using the legacy public attribute name."""
+        return self.device_type
+
+    @type.setter
+    def type(self, value: str) -> None:
+        """Update the device type using the legacy public attribute name."""
+        self.device_type = value
+
+    def parse_data(
+        self, data: bytes, register: int | None = None
+    ) -> dict[str, int | float | str]:
+        """Parse raw data for this parser's device type and start register."""
+        if register is None:
+            logger.warning("Register parameter is required but not provided")
+            return {}
+
+        return self.parse(data, self.device_type, register)
+
+
+class ControllerParser(RenogyDeviceParser):
     """
     Parser specifically for Renogy charge controllers.
 
@@ -184,33 +246,10 @@ class ControllerParser(RenogyBaseParser):
     functionality that may be needed.
     """
 
-    def __init__(self) -> None:
-        """Initialize the controller parser."""
-        super().__init__()
-        self.type = "controller"
-
-    def parse_data(
-        self, data: bytes, register: int | None = None
-    ) -> dict[str, int | float | str]:
-        """
-        Parse raw data from a controller device.
-
-        Args:
-            data (bytes): The raw byte data received from the device
-            register (int, optional): The register number to parse. If not provided,
-                                      returns an empty dictionary.
-        Returns:
-            dict: A dictionary containing the parsed values specific to the device type
-        """
-        if register is None:
-            logger.warning("Register parameter is required but not provided")
-            return {}
-
-        # Use the base parser's parse method with the device type
-        return self.parse(data, self.type, register)
+    device_type = "controller"
 
 
-class DCCParser(RenogyBaseParser):
+class DCCParser(RenogyDeviceParser):
     """
     Parser specifically for Renogy DC-DC chargers.
 
@@ -218,27 +257,4 @@ class DCCParser(RenogyBaseParser):
     like DCC30S, DCC50S, RBC20D1U, RBC40D1U, etc.
     """
 
-    def __init__(self) -> None:
-        """Initialize the DCC parser."""
-        super().__init__()
-        self.type = "dcc"
-
-    def parse_data(
-        self, data: bytes, register: int | None = None
-    ) -> dict[str, int | float | str]:
-        """
-        Parse raw data from a DCC device.
-
-        Args:
-            data (bytes): The raw byte data received from the device
-            register (int, optional): The register number to parse. If not provided,
-                                      returns an empty dictionary.
-        Returns:
-            dict: A dictionary containing the parsed values specific to the device type
-        """
-        if register is None:
-            logger.warning("Register parameter is required but not provided")
-            return {}
-
-        # Use the base parser's parse method with the device type
-        return self.parse(data, self.type, register)
+    device_type = "dcc"
