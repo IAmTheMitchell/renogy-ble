@@ -562,7 +562,7 @@ def test_read_device_reads_battery_pro_data(monkeypatch):
 
             cell_payload = bytearray(68)
             cell_payload[0:2] = (4).to_bytes(2, "big")
-            for index, value in enumerate((330, 330, 331, 331)):
+            for index, value in enumerate((33, 33, 33, 33)):
                 start = 2 + index * 2
                 cell_payload[start : start + 2] = value.to_bytes(2, "big")
             cell_payload[34:36] = (1).to_bytes(2, "big")
@@ -607,6 +607,7 @@ def test_read_device_reads_battery_pro_data(monkeypatch):
     assert result.parsed_data["battery_current"] == 123.4
     assert result.parsed_data["battery_percentage"] == 65.0
     assert result.parsed_data["battery_cycle_count"] == 7
+    assert result.parsed_data["cell_voltages"] == [3.3, 3.3, 3.3, 3.3]
     assert result.parsed_data["battery_temperature"] == 23.0
     assert [request[0] for request in dummy_client.writes] == [0xFF] * 4
 
@@ -705,7 +706,7 @@ def test_read_device_detects_battery_variant_from_manufacturer_data(monkeypatch)
 
             cell_payload = bytearray(68)
             cell_payload[0:2] = (4).to_bytes(2, "big")
-            for index, value in enumerate((330, 330, 331, 331)):
+            for index, value in enumerate((3300, 3300, 3310, 3310)):
                 start = 2 + index * 2
                 cell_payload[start : start + 2] = value.to_bytes(2, "big")
             cell_payload[34:36] = (1).to_bytes(2, "big")
@@ -749,6 +750,7 @@ def test_read_device_detects_battery_variant_from_manufacturer_data(monkeypatch)
 
     assert result.success is True
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
+    assert result.parsed_data["cell_voltages"] == [3.3, 3.3, 3.31, 3.31]
     assert [request[0] for request in dummy_client.writes] == [0xFF] * 4
 
 
@@ -932,7 +934,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(
 
             cell_payload = bytearray(68)
             cell_payload[0:2] = (4).to_bytes(2, "big")
-            for index, value in enumerate((330, 330, 331, 331)):
+            for index, value in enumerate((33, 33, 33, 33)):
                 start = 2 + index * 2
                 cell_payload[start : start + 2] = value.to_bytes(2, "big")
             cell_payload[34:36] = (1).to_bytes(2, "big")
@@ -975,6 +977,7 @@ def test_read_device_uses_resolved_handles_for_battery_pro_characteristics(
 
     assert result.success is True
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
+    assert result.parsed_data["cell_voltages"] == [3.3, 3.3, 3.3, 3.3]
     assert dummy_client.start_notify_targets[0] == 33
     assert dummy_client.write_targets == [17] * 4
     assert dummy_client.write_responses == [expected_response] * 4
@@ -1060,7 +1063,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_all_match(
 
             cell_payload = bytearray(68)
             cell_payload[0:2] = (4).to_bytes(2, "big")
-            for index, value in enumerate((330, 330, 331, 331)):
+            for index, value in enumerate((33, 33, 33, 33)):
                 start = 2 + index * 2
                 cell_payload[start : start + 2] = value.to_bytes(2, "big")
             cell_payload[34:36] = (1).to_bytes(2, "big")
@@ -1103,6 +1106,7 @@ def test_read_device_falls_back_to_uuid_when_battery_services_do_not_all_match(
 
     assert result.success is True
     assert result.parsed_data["battery_variant"] == BATTERY_VARIANT_PRO
+    assert result.parsed_data["cell_voltages"] == [3.3, 3.3, 3.3, 3.3]
     assert dummy_client.start_notify_targets[0] == RENOGY_READ_CHAR_UUID
     assert dummy_client.write_targets == [RENOGY_WRITE_CHAR_UUID] * 4
     assert dummy_client.write_responses == [True] * 4
