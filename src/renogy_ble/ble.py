@@ -23,6 +23,7 @@ from renogy_ble.battery import (
     BATTERY_PROTOCOL_DEVICE_IDS,
     BATTERY_VARIANT_LEGACY,
     BatteryVariant,
+    battery_cell_voltage_divisor,
     build_battery_command,
     detect_battery_variant,
     is_rngr_bp_battery_name,
@@ -692,6 +693,10 @@ class RenogyBleClient:
                 # Preserve stable metadata that can be reused across polls.
                 parsed_updates = dict(device.parsed_data)
                 device_id = BATTERY_PROTOCOL_DEVICE_IDS[variant]
+                cell_voltage_divisor = battery_cell_voltage_divisor(
+                    device.advertised_name,
+                    variant=variant,
+                )
 
                 for cmd_name, (register, word_count) in BATTERY_COMMANDS.items():
                     self._reset_notifications(session)
@@ -720,13 +725,19 @@ class RenogyBleClient:
                         # to its request, so stop using this session.
                         break
 
-                    parser = {
-                        "device_info": parse_battery_device_info,
-                        "pack_status": parse_battery_pack_status,
-                        "cell_status": parse_battery_cell_status,
-                        "mosfet_status": parse_battery_mosfet_status,
-                    }[cmd_name]
-                    parsed = parser(result_data, variant=variant)
+                    if cmd_name == "cell_status":
+                        parsed = parse_battery_cell_status(
+                            result_data,
+                            variant=variant,
+                            cell_voltage_divisor=cell_voltage_divisor,
+                        )
+                    else:
+                        parser = {
+                            "device_info": parse_battery_device_info,
+                            "pack_status": parse_battery_pack_status,
+                            "mosfet_status": parse_battery_mosfet_status,
+                        }[cmd_name]
+                        parsed = parser(result_data, variant=variant)
                     if not parsed:
                         logger.info(
                             "Failed to parse battery command %s from device %s",

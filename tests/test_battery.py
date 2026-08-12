@@ -3,6 +3,8 @@
 from renogy_ble.battery import (
     BATTERY_VARIANT_LEGACY,
     BATTERY_VARIANT_PRO,
+    BATTERY_VARIANT_RNGPRO,
+    battery_cell_voltage_divisor,
     build_battery_command,
     detect_battery_variant,
     is_supported_battery_name,
@@ -113,8 +115,8 @@ def test_parse_battery_pack_status_preserves_fractional_capacity() -> None:
     assert parsed["battery_percentage"] == 50.3
 
 
-def test_parse_battery_cell_status_pro_uses_tenth_volt_scale() -> None:
-    """Pro packs report cell voltage in 0.1 V units (raw x 0.1)."""
+def test_parse_battery_cell_status_rngr_bp_uses_tenth_volt_scale() -> None:
+    """RNGRBP packs report cell voltage in 0.1 V units (raw x 0.1)."""
     payload = bytearray(68)
     payload[0:2] = (4).to_bytes(2, "big")
     # 4 cells of 3.6 V summing to the 14.4 V pack voltage, as seen on RNGRBP.
@@ -127,7 +129,14 @@ def test_parse_battery_cell_status_pro_uses_tenth_volt_scale() -> None:
     payload[40:42] = (233).to_bytes(2, "big", signed=True)
 
     cell_frame = _battery_frame(0xFF, bytes(payload))
-    parsed = parse_battery_cell_status(cell_frame, variant=BATTERY_VARIANT_PRO)
+    parsed = parse_battery_cell_status(
+        cell_frame,
+        variant=BATTERY_VARIANT_PRO,
+        cell_voltage_divisor=battery_cell_voltage_divisor(
+            "RNGRBP123456",
+            variant=BATTERY_VARIANT_PRO,
+        ),
+    )
 
     assert parsed["cell_count"] == 4
     assert parsed["cell_voltages"] == [3.6, 3.6, 3.6, 3.6]
@@ -135,6 +144,37 @@ def test_parse_battery_cell_status_pro_uses_tenth_volt_scale() -> None:
     assert parsed["cell_voltage_max"] == 3.6
     assert parsed["cell_voltage_delta"] == 0.0
     assert parsed["battery_temperature"] == 23.3
+
+
+def test_battery_cell_voltage_divisor_scopes_tenth_volt_families() -> None:
+    """Only hardware-confirmed families should use the tenth-volt scale."""
+    assert (
+        battery_cell_voltage_divisor("RNGRBP123456", variant=BATTERY_VARIANT_PRO) == 10
+    )
+    assert (
+        battery_cell_voltage_divisor(
+            "RNGPRO125BAT-EF036881", variant=BATTERY_VARIANT_RNGPRO
+        )
+        == 10
+    )
+    assert (
+        battery_cell_voltage_divisor("RNGC123456", variant=BATTERY_VARIANT_PRO) == 1000
+    )
+    assert battery_cell_voltage_divisor("Unknown", variant=BATTERY_VARIANT_PRO) == 1000
+
+
+def test_parse_battery_cell_status_pro_defaults_to_millivolt_scale() -> None:
+    """Generic Pro parsing should preserve the established millivolt default."""
+    payload = bytearray(68)
+    payload[0:2] = (4).to_bytes(2, "big")
+    for index, value in enumerate((3300, 3300, 3310, 3310)):
+        start = 2 + index * 2
+        payload[start : start + 2] = value.to_bytes(2, "big")
+
+    cell_frame = _battery_frame(0xFF, bytes(payload))
+    parsed = parse_battery_cell_status(cell_frame, variant=BATTERY_VARIANT_PRO)
+
+    assert parsed["cell_voltages"] == [3.3, 3.3, 3.31, 3.31]
 
 
 def test_parse_battery_cell_status_and_faults() -> None:

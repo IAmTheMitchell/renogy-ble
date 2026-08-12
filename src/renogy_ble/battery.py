@@ -9,10 +9,11 @@ BATTERY_DEVICE_TYPE = "battery"
 BATTERY_VARIANT_LEGACY = "legacy"
 BATTERY_VARIANT_PRO = "pro"
 # RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) share the Pro register map and
-# device id but use different field scaling than RNGRBP/RNGC "pro" batteries:
-# current in 0.01 A units (not 0.1 A) and cell voltages in 0.1 V units (not mV).
+# device id but use 0.01 A current units rather than the Pro variant's 0.1 A.
+# Their 0.1 V cell units match RNGRBP; RNGC scaling remains unconfirmed.
 BATTERY_VARIANT_RNGPRO = "rngpro"
 BatteryVariant = Literal["legacy", "pro", "rngpro"]
+BatteryCellVoltageDivisor = Literal[10, 1000]
 
 BATTERY_RNGRBP_NAME_PREFIX = "RNGRBP"
 BATTERY_PRO_NAME_PREFIXES = (BATTERY_RNGRBP_NAME_PREFIX, "RNGC")
@@ -50,6 +51,17 @@ def clean_battery_text(value: bytes) -> str:
 def is_rngr_bp_battery_name(name: str | None) -> bool:
     """Return whether an advertisement belongs to the RNGRBP family."""
     return (name or "").strip().startswith(BATTERY_RNGRBP_NAME_PREFIX)
+
+
+def battery_cell_voltage_divisor(
+    name: str | None,
+    *,
+    variant: BatteryVariant,
+) -> BatteryCellVoltageDivisor:
+    """Return the cell-voltage divisor confirmed for an advertised family."""
+    if variant == BATTERY_VARIANT_RNGPRO or is_rngr_bp_battery_name(name):
+        return 10
+    return 1000
 
 
 def detect_battery_variant(
@@ -190,6 +202,7 @@ def parse_battery_cell_status(
     data: bytes,
     *,
     variant: BatteryVariant,
+    cell_voltage_divisor: BatteryCellVoltageDivisor | None = None,
 ) -> dict[str, Any]:
     """Parse cell voltages and temperature sensors."""
     parsed: dict[str, Any] = {}
@@ -197,13 +210,9 @@ def parse_battery_cell_status(
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
-    # Cell voltage units differ by protocol variant: legacy reports millivolts,
-    # while the pro (RNGRBP/RNGC) and RNGPRO families report 0.1 V units. #120
-    # corrected the RNGPRO variant; the pro family scales the same way, confirmed
-    # on RNGRBP hardware (4 cells x 3.6 V = 14.4 V pack, matching the pack-voltage
-    # register read separately) and cyrils/renogy-bt.
-    cell_divisor = (
-        10 if variant in (BATTERY_VARIANT_RNGPRO, BATTERY_VARIANT_PRO) else 1000
+    cell_divisor = cell_voltage_divisor or battery_cell_voltage_divisor(
+        None,
+        variant=variant,
     )
     cell_values = [
         int.from_bytes(data[start : start + 2], byteorder="big") / cell_divisor
