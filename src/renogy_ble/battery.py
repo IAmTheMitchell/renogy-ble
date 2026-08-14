@@ -57,11 +57,13 @@ def battery_cell_voltage_divisor(
     name: str | None,
     *,
     variant: BatteryVariant,
-) -> BatteryCellVoltageDivisor:
-    """Return the cell-voltage divisor confirmed for an advertised family."""
+) -> BatteryCellVoltageDivisor | None:
+    """Return a confirmed cell-voltage divisor, if the family identifies one."""
     if variant == BATTERY_VARIANT_RNGPRO or is_rngr_bp_battery_name(name):
         return 10
-    return 1000
+    if variant != BATTERY_VARIANT_PRO or (name or "").strip().startswith("RNGC"):
+        return 1000
+    return None
 
 
 def detect_battery_variant(
@@ -210,14 +212,21 @@ def parse_battery_cell_status(
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
-    cell_divisor = cell_voltage_divisor or battery_cell_voltage_divisor(
-        None,
-        variant=variant,
-    )
-    cell_values = [
-        int.from_bytes(data[start : start + 2], byteorder="big") / cell_divisor
+    raw_cell_values = [
+        int.from_bytes(data[start : start + 2], byteorder="big")
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
     ]
+    cell_divisor = cell_voltage_divisor or battery_cell_voltage_divisor(
+        None, variant=variant
+    )
+    if cell_divisor is None:
+        # Manufacturer-only discovery does not identify whether a Pro pack is
+        # RNGRBP (0.1 V units) or RNGC (millivolts). A positive raw value below
+        # 100 would be under 0.1 V with millivolt encoding, so infer only that
+        # unambiguous case and preserve the millivolt default otherwise.
+        positive_values = [value for value in raw_cell_values if value > 0]
+        cell_divisor = 10 if positive_values and max(positive_values) < 100 else 1000
+    cell_values = [value / cell_divisor for value in raw_cell_values]
     if cell_values:
         parsed["cell_voltages"] = cell_values
         parsed["cell_voltage_min"] = min(cell_values)

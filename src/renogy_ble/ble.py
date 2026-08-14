@@ -211,13 +211,21 @@ class RenogyBLEDevice:
         advertisement_rssi: Optional[int] = None,
         device_type: str = DEFAULT_DEVICE_TYPE,
         manufacturer_data: dict[int, bytes] | None = None,
+        advertisement_name: str | None = None,
     ):
         """Initialize the Renogy BLE device."""
         self.ble_device = ble_device
         self.address = ble_device.address
 
         cleaned_name = clean_device_name(ble_device.name)
-        self.advertised_name = cleaned_name
+        # BLEDevice.name is an OS name and is not guaranteed to be the local
+        # name from the advertisement. Callers with AdvertisementData should
+        # pass its local_name so family-specific protocol behavior is reliable.
+        self.advertised_name = (
+            clean_device_name(advertisement_name)
+            if advertisement_name
+            else cleaned_name
+        )
         self.name = cleaned_name or "Unknown Renogy Device"
 
         # Use the provided advertisement RSSI if available, otherwise set to None.
@@ -234,7 +242,10 @@ class RenogyBLEDevice:
         self.device_type = device_type
         self.last_unavailable_time: Optional[datetime] = None
         self.battery_variant: BatteryVariant | None = (
-            detect_battery_variant(self.name, manufacturer_data=self.manufacturer_data)
+            detect_battery_variant(
+                self.advertised_name,
+                manufacturer_data=self.manufacturer_data,
+            )
             if device_type == BATTERY_DEVICE_TYPE
             else None
         )
@@ -1338,9 +1349,7 @@ class RenogyBleClient:
                     and {"write", "write-without-response"} & properties
                 ):
                     write_handle = characteristic.handle
-                    if "write-without-response" in properties and (
-                        write_with_response is False or "write" not in properties
-                    ):
+                    if "write-without-response" in properties:
                         write_with_response = False
                     else:
                         write_with_response = True

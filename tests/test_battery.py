@@ -160,7 +160,7 @@ def test_battery_cell_voltage_divisor_scopes_tenth_volt_families() -> None:
     assert (
         battery_cell_voltage_divisor("RNGC123456", variant=BATTERY_VARIANT_PRO) == 1000
     )
-    assert battery_cell_voltage_divisor("Unknown", variant=BATTERY_VARIANT_PRO) == 1000
+    assert battery_cell_voltage_divisor("Unknown", variant=BATTERY_VARIANT_PRO) is None
 
 
 def test_parse_battery_cell_status_pro_defaults_to_millivolt_scale() -> None:
@@ -175,6 +175,20 @@ def test_parse_battery_cell_status_pro_defaults_to_millivolt_scale() -> None:
     parsed = parse_battery_cell_status(cell_frame, variant=BATTERY_VARIANT_PRO)
 
     assert parsed["cell_voltages"] == [3.3, 3.3, 3.31, 3.31]
+
+
+def test_parse_battery_cell_status_unknown_pro_infers_tenth_volt_scale() -> None:
+    """Manufacturer-only Pro discovery should recognize unambiguous 0.1 V data."""
+    payload = bytearray(68)
+    payload[0:2] = (4).to_bytes(2, "big")
+    for index, value in enumerate((33, 33, 34, 34)):
+        start = 2 + index * 2
+        payload[start : start + 2] = value.to_bytes(2, "big")
+
+    cell_frame = _battery_frame(0xFF, bytes(payload))
+    parsed = parse_battery_cell_status(cell_frame, variant=BATTERY_VARIANT_PRO)
+
+    assert parsed["cell_voltages"] == [3.3, 3.3, 3.4, 3.4]
 
 
 def test_parse_battery_cell_status_and_faults() -> None:

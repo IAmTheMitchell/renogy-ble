@@ -82,6 +82,20 @@ def test_create_modbus_write_request_defaults_function_code():
     assert frame[6:] == bytes([crc_low, crc_high])
 
 
+def test_device_uses_explicit_advertisement_name_for_battery_family() -> None:
+    """The advertisement local name should override a generic BLE OS name."""
+    device = RenogyBLEDevice(
+        _mock_ble_device(name="Generic OS name"),
+        device_type="battery",
+        manufacturer_data={0xE14C: b"\x01"},
+        advertisement_name="RNGRBP123456",
+    )
+
+    assert device.name == "Generic OS name"
+    assert device.advertised_name == "RNGRBP123456"
+    assert device.battery_variant == BATTERY_VARIANT_PRO
+
+
 def test_extract_valid_read_response_skips_junk_prefix():
     client = RenogyBleClient()
     payload = bytes([DEFAULT_DEVICE_ID, 0x03, 0x02, 0x12, 0x34])
@@ -849,6 +863,7 @@ def test_read_device_falls_back_to_legacy_variant_for_manual_bt_th_battery(
     ("write_properties", "expected_response"),
     [
         (["write-without-response"], False),
+        (["write", "write-without-response"], False),
         (["write"], True),
     ],
 )
