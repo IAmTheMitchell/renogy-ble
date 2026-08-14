@@ -82,9 +82,7 @@ from renogy_ble import RenogyBLEDevice, RenogyBleClient
 
 async def main() -> None:
     devices = await BleakScanner.discover()
-    ble_device = next(
-        device for device in devices if "Renogy" in (device.name or "")
-    )
+    ble_device = next(device for device in devices if "Renogy" in (device.name or ""))
 
     renogy_device = RenogyBLEDevice(ble_device, device_type="controller")
     client = RenogyBleClient()
@@ -126,6 +124,20 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+The RIV4835CSH1S uses a different register layout and does not answer the
+standard model probe. Select its profile explicitly when constructing the
+device:
+
+```python
+from renogy_ble import RIV4835CSH1S_MODEL, RenogyBLEDevice
+
+renogy_device = RenogyBLEDevice(
+    ble_device,
+    device_type="inverter",
+    model_hint=RIV4835CSH1S_MODEL,
+)
 ```
 
 ### Battery Reads
@@ -225,7 +237,7 @@ Returns a flat dictionary of parsed values:
 {
     "battery_voltage": 12.9,
     "pv_power": 250,
-    "charging_status": "mppt"  # Mapped from numeric values where applicable
+    "charging_status": "mppt",  # Mapped from numeric values where applicable
 }
 ```
 

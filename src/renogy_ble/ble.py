@@ -50,14 +50,6 @@ MAX_NOTIFICATION_WAIT_TIME = 2.0
 DEFAULT_DEVICE_ID = 0xFF
 INVERTER_DEVICE_ID = 0x20
 RIV4835CSH1S_MODEL = "RIV4835CSH1S"
-RIV4835CSH1S_CHARGING_STATES = {
-    0: "deactivated",
-    1: "constant current",
-    2: "constant voltage",
-    4: "floating",
-    6: "battery activation",
-    7: "battery disconnecting",
-}
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
@@ -73,6 +65,16 @@ INVERTER_INIT_CHAR_UUID = "0000ffd4-0000-1000-8000-00805f9b34fb"
 INVERTER_INIT_DELAY = 1.0
 INVERTER_INTER_COMMAND_DELAY = 0.3
 INVERTER_COMMAND_TIMEOUT = 10.0
+
+# Charging state values reported by inverter register 4327
+INVERTER_CHARGING_STATE = {
+    0: "deactivated",
+    1: "constant_current",
+    2: "constant_voltage",
+    4: "floating",
+    6: "battery_activation",
+    7: "battery_disconnecting",
+}
 
 # Modbus commands for requesting data
 # Format: (function_code, start_register, word_count)
@@ -783,13 +785,14 @@ class RenogyBleClient:
                     "_parse_inverter_device_id_response",
                     cache_key="device_id",
                 ),
-                _InverterReadSpec(4327, 7, "_parse_riv4835csh1s_charging_response"),
+                _InverterReadSpec(4327, 7, "_parse_inverter_charging_response"),
                 _InverterReadSpec(4408, 6, "_parse_riv4835csh1s_load_response"),
             )
 
         return (
-            _InverterReadSpec(4000, 32, "_parse_inverter_main_response", retries=2),
+            _InverterReadSpec(4000, 10, "_parse_inverter_main_response", retries=2),
             _InverterReadSpec(4408, 6, "_parse_inverter_load_response"),
+            _InverterReadSpec(4327, 7, "_parse_inverter_charging_response"),
             _InverterReadSpec(
                 4109,
                 1,
@@ -802,6 +805,10 @@ class RenogyBleClient:
                 "_parse_inverter_model_response",
                 cache_key="model",
             ),
+            _InverterReadSpec(4456, 1, "_parse_inverter_ac_input_current_limit"),
+            _InverterReadSpec(4422, 1, "_parse_inverter_charge_current"),
+            _InverterReadSpec(4430, 1, "_parse_inverter_low_voltage_warn"),
+            _InverterReadSpec(4452, 1, "_parse_inverter_over_voltage"),
         )
 
     async def _read_inverter_device(
@@ -1005,40 +1012,6 @@ class RenogyBleClient:
         }
 
     @staticmethod
-    def _parse_riv4835csh1s_charging_response(data: bytes) -> dict[str, Any]:
-        """Parse RIV4835CSH1S register 4327 charging and PV telemetry."""
-        if len(data) < 19:
-            logger.warning(
-                "RIV4835CSH1S charging response too short: %d bytes", len(data)
-            )
-            return {}
-
-        values = [
-            int.from_bytes(data[index : index + 2], "big")
-            for index in range(3, len(data) - 2, 2)
-        ]
-        if len(values) < 7:
-            logger.warning("Not enough RIV4835CSH1S charging values: %d", len(values))
-            return {}
-
-        battery_current_raw = values[1]
-        if battery_current_raw & 0x8000:
-            battery_current_raw -= 0x10000
-
-        return {
-            "battery_percentage": values[0],
-            # RIV4835CSH1S convention: positive is discharge, negative is charge.
-            "battery_current": battery_current_raw * 0.1,
-            "pv_voltage": values[2] * 0.1,
-            "pv_current": values[3] * 0.1,
-            "pv_power": values[4],
-            "charging_status": RIV4835CSH1S_CHARGING_STATES.get(
-                values[5], f"unknown ({values[5]})"
-            ),
-            "charging_power": values[6],
-        }
-
-    @staticmethod
     def _parse_riv4835csh1s_load_response(data: bytes) -> dict[str, Any]:
         """Parse RIV4835CSH1S register 4408 load and line-charge telemetry."""
         if len(data) < 17:
@@ -1083,6 +1056,31 @@ class RenogyBleClient:
         }
 
     @staticmethod
+    def _parse_inverter_charging_response(data: bytes) -> dict[str, Any]:
+        """Parse Modbus response from inverter register 4327."""
+        if len(data) < 19:
+            logger.warning("Inverter charging response too short: %d bytes", len(data))
+            return {}
+
+        values = [
+            int.from_bytes(data[index : index + 2], "big")
+            for index in range(3, len(data) - 2, 2)
+        ]
+        if len(values) < 7:
+            logger.warning("Not enough inverter charging values: %d", len(values))
+            return {}
+
+        return {
+            "battery_percentage": values[0],
+            "charging_current": int.from_bytes(data[5:7], "big", signed=True) * 0.1,
+            "solar_voltage": values[2] * 0.1,
+            "solar_current": values[3] * 0.1,
+            "solar_power": values[4],
+            "charging_status": INVERTER_CHARGING_STATE.get(values[5]),
+            "charging_power": values[6],
+        }
+
+    @staticmethod
     def _parse_inverter_device_id_response(data: bytes) -> dict[str, Any]:
         """Parse Modbus response from inverter register 4109."""
         if len(data) < 7:
@@ -1103,6 +1101,34 @@ class RenogyBleClient:
             return {}
 
         return {"model": model}
+
+    @staticmethod
+    def _parse_inverter_setpoint(data: bytes, key: str) -> dict[str, Any]:
+        """Decode a single-register inverter setpoint response (raw x0.1)."""
+        if len(data) < 5:
+            logger.warning("Inverter setpoint response too short: %d bytes", len(data))
+            return {}
+        return {key: int.from_bytes(data[3:5], "big") * 0.1}
+
+    @staticmethod
+    def _parse_inverter_ac_input_current_limit(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(
+            data, "inverter_ac_input_current_limit"
+        )
+
+    @staticmethod
+    def _parse_inverter_charge_current(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(data, "inverter_charge_current")
+
+    @staticmethod
+    def _parse_inverter_low_voltage_warn(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(
+            data, "inverter_low_voltage_warn"
+        )
+
+    @staticmethod
+    def _parse_inverter_over_voltage(data: bytes) -> dict[str, Any]:
+        return RenogyBleClient._parse_inverter_setpoint(data, "inverter_over_voltage")
 
     async def write_single_register(
         self,
