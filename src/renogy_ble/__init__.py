@@ -11,6 +11,7 @@ from renogy_ble.battery import (
     BATTERY_DEVICE_TYPE,
     BATTERY_VARIANT_LEGACY,
     BATTERY_VARIANT_PRO,
+    BATTERY_VARIANT_RNGPRO,
     detect_battery_variant,
     is_supported_battery_name,
 )
@@ -56,6 +57,7 @@ __all__ = [
     "BATTERY_DEVICE_TYPE",
     "BATTERY_VARIANT_LEGACY",
     "BATTERY_VARIANT_PRO",
+    "BATTERY_VARIANT_RNGPRO",
     "DEFAULT_DEVICE_ID",
     "DEFAULT_DEVICE_TYPE",
     "LOAD_CONTROL_REGISTER",

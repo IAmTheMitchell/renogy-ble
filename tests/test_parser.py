@@ -12,7 +12,8 @@ from unittest.mock import patch
 import pytest
 
 # Import the modules to be tested
-from renogy_ble.parser import ControllerParser, RenogyBaseParser, parse_value
+from renogy_ble.parser import ControllerParser, DCCParser, RenogyBaseParser, parse_value
+from renogy_ble.register_map import RegisterMap
 
 
 def test_parse_value_big_endian():
@@ -171,6 +172,43 @@ def test_parse_partial_data():
         logger.removeHandler(log_handler)
 
 
+def test_register_map_assignment_rebuilds_index():
+    """Replacing the public register map should update an enabled parser index."""
+    parser = RenogyBaseParser(_cache_register_fields=True)
+    register_map: RegisterMap = {
+        "custom": {
+            "value": {
+                "register": 1,
+                "length": 1,
+                "byte_order": "big",
+                "offset": 0,
+            }
+        }
+    }
+    parser.register_map = register_map
+
+    assert parser.parse(b"\x2a", "custom", 1) == {"value": 42}
+
+
+def test_register_map_in_place_mutation_remains_visible(base_parser):
+    """Direct parser instances should retain their live register-map behavior."""
+    base_parser.register_map = {
+        "custom": {
+            "value": {
+                "register": 1,
+                "length": 1,
+                "byte_order": "big",
+                "offset": 0,
+            }
+        }
+    }
+
+    base_parser.register_map["custom"]["value"]["register"] = 2
+
+    assert base_parser.parse(b"\x2a", "custom", 1) == {}
+    assert base_parser.parse(b"\x2a", "custom", 2) == {"value": 42}
+
+
 @pytest.fixture
 def controller_parser():
     """Fixture that returns a ControllerParser instance."""
@@ -194,6 +232,47 @@ def test_parse_data(controller_parser):
 
         # Check that parse was called with the correct arguments
         mock_parse.assert_called_once_with(data, "controller", 256)
+
+
+@pytest.mark.parametrize(
+    ("parser_class", "device_type"),
+    [(ControllerParser, "controller"), (DCCParser, "dcc")],
+)
+def test_parser_type_alias(parser_class, device_type):
+    """Keep the legacy type attribute synchronized with device_type."""
+    parser = parser_class()
+
+    assert parser.type == device_type
+
+    parser.type = "custom"
+    assert parser.device_type == "custom"
+
+    parser.device_type = device_type
+    assert parser.type == device_type
+
+
+def test_parse_data_honors_type_override(controller_parser):
+    """Direct consumers can continue overriding the legacy type attribute."""
+    controller_parser.type = "dcc"
+
+    with patch.object(ControllerParser, "parse", return_value={}) as mock_parse:
+        controller_parser.parse_data(b"data", register=256)
+
+    mock_parse.assert_called_once_with(b"data", "dcc", 256)
+
+
+def test_parser_dispatch_reuses_parser_instance():
+    """The parser facade should not rebuild register indexes for every response."""
+    from renogy_ble.renogy_parser import _PARSERS, RenogyParser
+
+    parser = _PARSERS["controller"]
+    assert parser._fields_by_register is not None
+
+    with patch.object(parser, "parse_data", return_value={}) as parse:
+        RenogyParser.parse(b"first", "controller", 12)
+        RenogyParser.parse(b"second", "controller", 26)
+
+    assert parse.call_count == 2
 
 
 @pytest.fixture
@@ -374,8 +453,52 @@ def test_dcc_reverse_charging_voltage_parsing():
 def test_dcc_solar_cutoff_current_parsing():
     """Test parsing DCC solar cutoff current from its dedicated register."""
     parser = RenogyBaseParser()
-    data = bytes([0xFF, 0x03, 0x02, 0x00, 0x07, 0x00, 0x00])  # 7A
+    # The device reports centiamps, like every other DCC current register.
+    data = bytes([0xFF, 0x03, 0x02, 0x02, 0xBC, 0x00, 0x00])  # 700 -> 7.0A
 
     result = parser.parse(data, "dcc", 57400)
 
-    assert result["solar_cutoff_current"] == 7
+    assert result["solar_cutoff_current"] == 7.0
+
+
+def test_every_dcc_field_is_reachable_by_some_command():
+    """A field must live under a register some command actually asks for.
+
+    ``RenogyBaseParser.parse`` matches a field to a response by exact start
+    register, and the only call site passes a command's *start* register. A
+    field declared under any other register is therefore unreachable on every
+    device -- it can never appear in parsed output.
+    """
+    from renogy_ble.ble import COMMANDS
+    from renogy_ble.register_map import REGISTER_MAP
+
+    starts = {register for _fn, register, _words in COMMANDS["dcc"].values()}
+    orphans = {
+        name: field["register"]
+        for name, field in REGISTER_MAP["dcc"].items()
+        if field.get("register") not in starts
+    }
+    assert not orphans, f"unreachable DCC fields: {orphans}"
+
+
+def test_dcc_status_block_parses_every_field():
+    """Parse a real status frame captured from a DCC50S (RBC2125DS-21W-).
+
+    ff 03 0e | 0002 0000 0000 0000 010b 0004 0000
+    addr/fn/len then 7 words. The 267 W in ``output_power`` was corroborated
+    live by ``alternator_power`` reading 265 W at the same moment, and
+    ``charging_mode`` 4 (solar_alternator_to_house) agreed with
+    ``charging_status`` 2 (mppt) -- two registers telling the same story,
+    which is what pins the byte offsets.
+    """
+    from renogy_ble.parser import DCCParser
+
+    frame = bytes.fromhex("ff030e0002000000000000010b00040000")
+    parsed = DCCParser().parse_data(frame, register=288)
+
+    assert parsed["charging_status"] == "mppt"
+    assert parsed["fault_high"] == 0
+    assert parsed["fault_low"] == 0
+    assert parsed["output_power"] == 267
+    assert parsed["charging_mode"] == "solar_alternator_to_house"
+    assert parsed["ignition_status"] == "disconnected"

@@ -2,6 +2,7 @@
   "packages": {
     ".": {
       "changelog-path": "CHANGELOG.md",
+      "include-commit-authors": true,
       "release-type": "python",
       "include-v-in-tag": true,
       "bump-minor-pre-major": true,

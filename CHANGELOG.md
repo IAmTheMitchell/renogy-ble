@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## [2.4.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.4.0...v2.4.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* declare the DCC status fields under the register that is actually read ([#138](https://github.com/IAmTheMitchell/renogy-ble/issues/138)) ([9854a8d](https://github.com/IAmTheMitchell/renogy-ble/commit/9854a8d632098c319c31e0d2e1664739c94d5835))
+* drop the BLE session after a read timeout ([#128](https://github.com/IAmTheMitchell/renogy-ble/issues/128)) ([9eb8f94](https://github.com/IAmTheMitchell/renogy-ble/commit/9eb8f94f3d0235c458231a5d27746f8c81059b0c))
+* scale DCC solar cutoff current to amps ([#127](https://github.com/IAmTheMitchell/renogy-ble/issues/127)) ([8a7da97](https://github.com/IAmTheMitchell/renogy-ble/commit/8a7da97908123d6ddcd9e85b6fb4d030c8da479a))
+
+
+### Documentation
+
+* refresh supported devices and developer guide ([#134](https://github.com/IAmTheMitchell/renogy-ble/issues/134)) ([48171c6](https://github.com/IAmTheMitchell/renogy-ble/commit/48171c6f8690dcb0395fb226a2715291a7fb417d))
+
+## [2.4.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.3.1...v2.4.0) (2026-07-23)
+
+
+### Features
+
+* support RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) ([#120](https://github.com/IAmTheMitchell/renogy-ble/issues/120)) ([6d8caa4](https://github.com/IAmTheMitchell/renogy-ble/commit/6d8caa41fd81505cdc4ff90140811280c4955af8))
+
 ## [2.3.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.3.0...v2.3.1) (2026-04-19)
 
 
