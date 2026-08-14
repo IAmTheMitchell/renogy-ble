@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import Callable
 from unittest.mock import MagicMock
 
+import pytest
+
 from renogy_ble.battery import BATTERY_VARIANT_LEGACY, BATTERY_VARIANT_PRO
 from renogy_ble.ble import (
     DEFAULT_DEVICE_ID,
@@ -209,6 +211,22 @@ def test_configurable_grace_defaults_preserve_current_behaviour():
         minutes=UNAVAILABLE_RETRY_INTERVAL + 1
     )
     assert device.should_retry_connection is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_failures": 0}, "max_failures must be at least 1"),
+        ({"max_failures": -1}, "max_failures must be at least 1"),
+        (
+            {"unavailable_retry_interval": -1},
+            "unavailable_retry_interval must be non-negative",
+        ),
+    ],
+)
+def test_configurable_grace_rejects_invalid_values(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        RenogyBLEDevice(_mock_ble_device(), **kwargs)
 
 
 def test_read_device_skips_disconnect_when_not_connected(monkeypatch):

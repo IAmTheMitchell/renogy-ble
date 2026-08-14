@@ -202,7 +202,17 @@ class RenogyBLEDevice:
         max_failures: int = 3,
         unavailable_retry_interval: int = UNAVAILABLE_RETRY_INTERVAL,
     ):
-        """Initialize the Renogy BLE device."""
+        """Initialize the Renogy BLE device.
+
+        Raises:
+            ValueError: If the failure threshold is not positive or the retry
+                interval is negative.
+        """
+        if max_failures < 1:
+            raise ValueError("max_failures must be at least 1")
+        if unavailable_retry_interval < 0:
+            raise ValueError("unavailable_retry_interval must be non-negative")
+
         self.ble_device = ble_device
         self.address = ble_device.address
 
