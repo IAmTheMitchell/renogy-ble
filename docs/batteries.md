@@ -36,6 +36,7 @@ async def main() -> None:
         ble_device,
         device_type="battery",
         manufacturer_data=advertisement.manufacturer_data,
+        advertisement_name=advertisement.local_name,
     )
     result = await RenogyBleClient().read_device(renogy_device)
     if result.success:

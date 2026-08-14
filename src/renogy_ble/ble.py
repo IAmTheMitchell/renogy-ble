@@ -23,8 +23,10 @@ from renogy_ble.battery import (
     BATTERY_PROTOCOL_DEVICE_IDS,
     BATTERY_VARIANT_LEGACY,
     BatteryVariant,
+    battery_cell_voltage_divisor,
     build_battery_command,
     detect_battery_variant,
+    is_rngr_bp_battery_name,
     parse_battery_cell_status,
     parse_battery_device_info,
     parse_battery_mosfet_status,
@@ -209,12 +211,21 @@ class RenogyBLEDevice:
         advertisement_rssi: Optional[int] = None,
         device_type: str = DEFAULT_DEVICE_TYPE,
         manufacturer_data: dict[int, bytes] | None = None,
+        advertisement_name: str | None = None,
     ):
         """Initialize the Renogy BLE device."""
         self.ble_device = ble_device
         self.address = ble_device.address
 
         cleaned_name = clean_device_name(ble_device.name)
+        # BLEDevice.name is an OS name and is not guaranteed to be the local
+        # name from the advertisement. Callers with AdvertisementData should
+        # pass its local_name so family-specific protocol behavior is reliable.
+        self.advertised_name = (
+            clean_device_name(advertisement_name)
+            if advertisement_name
+            else cleaned_name
+        )
         self.name = cleaned_name or "Unknown Renogy Device"
 
         # Use the provided advertisement RSSI if available, otherwise set to None.
@@ -231,7 +242,10 @@ class RenogyBLEDevice:
         self.device_type = device_type
         self.last_unavailable_time: Optional[datetime] = None
         self.battery_variant: BatteryVariant | None = (
-            detect_battery_variant(self.name, manufacturer_data=self.manufacturer_data)
+            detect_battery_variant(
+                self.advertised_name,
+                manufacturer_data=self.manufacturer_data,
+            )
             if device_type == BATTERY_DEVICE_TYPE
             else None
         )
@@ -449,6 +463,7 @@ class _PersistentBleSession:
     # read response carries no register address, so it cannot be told apart from
     # the next command's reply. The session must be dropped rather than reused.
     desynchronized: bool = False
+    write_with_response: bool | None = None
 
 
 class RenogyBleClient:
@@ -689,6 +704,10 @@ class RenogyBleClient:
                 # Preserve stable metadata that can be reused across polls.
                 parsed_updates = dict(device.parsed_data)
                 device_id = BATTERY_PROTOCOL_DEVICE_IDS[variant]
+                cell_voltage_divisor = battery_cell_voltage_divisor(
+                    device.advertised_name,
+                    variant=variant,
+                )
 
                 for cmd_name, (register, word_count) in BATTERY_COMMANDS.items():
                     self._reset_notifications(session)
@@ -696,9 +715,12 @@ class RenogyBleClient:
                         raise RuntimeError("BLE session is not connected")
 
                     request = build_battery_command(variant, register, word_count)
+                    # RNGRBP requires Write-Without-Response; other families use
+                    # the mode supported by their resolved characteristic.
                     await session.client.write_gatt_char(
                         session.write_target or self._write_char_uuid,
                         request,
+                        response=session.write_with_response,
                     )
                     try:
                         result_data = await self._wait_for_valid_read_response(
@@ -714,13 +736,19 @@ class RenogyBleClient:
                         # to its request, so stop using this session.
                         break
 
-                    parser = {
-                        "device_info": parse_battery_device_info,
-                        "pack_status": parse_battery_pack_status,
-                        "cell_status": parse_battery_cell_status,
-                        "mosfet_status": parse_battery_mosfet_status,
-                    }[cmd_name]
-                    parsed = parser(result_data, variant=variant)
+                    if cmd_name == "cell_status":
+                        parsed = parse_battery_cell_status(
+                            result_data,
+                            variant=variant,
+                            cell_voltage_divisor=cell_voltage_divisor,
+                        )
+                    else:
+                        parser = {
+                            "device_info": parse_battery_device_info,
+                            "pack_status": parse_battery_pack_status,
+                            "mosfet_status": parse_battery_mosfet_status,
+                        }[cmd_name]
+                        parsed = parser(result_data, variant=variant)
                     if not parsed:
                         logger.info(
                             "Failed to parse battery command %s from device %s",
@@ -1266,6 +1294,9 @@ class RenogyBleClient:
             self._reset_notifications(session)
             session.read_target = self._read_char_uuid
             session.write_target = self._write_char_uuid
+            session.write_with_response = (
+                False if is_rngr_bp_battery_name(device.advertised_name) else None
+            )
             if device.device_type == BATTERY_DEVICE_TYPE:
                 self._resolve_battery_characteristics(device, session)
 
@@ -1301,6 +1332,7 @@ class RenogyBleClient:
 
         notify_handle = None
         write_handle = None
+        write_with_response = session.write_with_response
         notify_service_uuid = normalize_uuid_str(RENOGY_NOTIFY_SERVICE_UUID)
         write_service_uuid = normalize_uuid_str(RENOGY_WRITE_SERVICE_UUID)
         notify_char_uuid = normalize_uuid_str(self._read_char_uuid)
@@ -1317,12 +1349,19 @@ class RenogyBleClient:
                     and {"write", "write-without-response"} & properties
                 ):
                     write_handle = characteristic.handle
+                    if "write-without-response" in properties:
+                        write_with_response = False
+                    else:
+                        write_with_response = True
                 if (
                     service_uuid == notify_service_uuid
                     and char_uuid == notify_char_uuid
                     and "notify" in properties
                 ):
                     notify_handle = characteristic.handle
+
+        if write_handle is not None:
+            session.write_with_response = write_with_response
 
         if notify_handle is None or write_handle is None:
             logger.debug(
@@ -1373,6 +1412,7 @@ class RenogyBleClient:
         session.read_target = None
         session.write_target = None
         session.desynchronized = False
+        session.write_with_response = None
         self._reset_notifications(session)
 
         if remove:
