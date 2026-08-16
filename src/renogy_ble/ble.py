@@ -98,6 +98,18 @@ COMMANDS = {
     },
 }
 
+# G6-generation DCC units (model suffix "-G6", e.g. RBC50D1S-G6) never answer
+# the discrete status read at 0x0120 -- the request times out on every poll.
+# Because a read timeout desynchronizes the notification stream, the timeout
+# also aborts every command queued after "status" and tears down the session.
+# The same firmware does answer a 34-word read at 0x0100, whose tail covers
+# 0x0120-0x0121 (charging_status and fault_high); registers beyond 0x0121
+# appear not to exist on G6 hardware, so a request spanning them fails as a
+# whole. For G6 models the "status" command is therefore skipped and
+# "dynamic_data" is extended to cover the status tail instead.
+DCC_G6_MODEL_SUFFIX = "-G6"
+DCC_G6_DYNAMIC_DATA_WORDS = 34  # 0x0100-0x0121
+
 
 def modbus_crc(data: bytes | bytearray) -> tuple[int, int]:
     """Calculate the Modbus CRC16 of the given data.
@@ -496,6 +508,32 @@ class RenogyBleClient:
         self._persistent_sessions: dict[str, _PersistentBleSession] = {}
         self._persistent_sessions_guard = asyncio.Lock()
 
+    @staticmethod
+    def _adjust_dcc_command_for_model(
+        device: RenogyBLEDevice,
+        cmd_name: str,
+        cmd: tuple[int, int, int],
+    ) -> tuple[int, int, int] | None:
+        """Return the command to send to this device, or None to skip it.
+
+        The model string parsed from the device_info command earlier in the
+        same poll cycle identifies G6-generation DCC units, which never answer
+        the discrete status read and need the dynamic_data read extended to
+        cover the status tail instead (see DCC_G6_MODEL_SUFFIX).
+        """
+        if device.device_type != "dcc":
+            return cmd
+        model = device.parsed_data.get("model")
+        if not isinstance(model, str) or not model.strip().upper().endswith(
+            DCC_G6_MODEL_SUFFIX
+        ):
+            return cmd
+        if cmd_name == "status":
+            return None
+        if cmd_name == "dynamic_data":
+            return (cmd[0], cmd[1], DCC_G6_DYNAMIC_DATA_WORDS)
+        return cmd
+
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
         """Connect to a device, fetch data, and return parsed results."""
         if device.device_type == BATTERY_DEVICE_TYPE:
@@ -555,6 +593,18 @@ class RenogyBleClient:
                 logger.debug("Connected to device %s", device.name)
 
                 for cmd_name, cmd in commands.items():
+                    adjusted_cmd = self._adjust_dcc_command_for_model(
+                        device, cmd_name, cmd
+                    )
+                    if adjusted_cmd is None:
+                        logger.debug(
+                            "Skipping %s command for G6 DCC device %s",
+                            cmd_name,
+                            device.name,
+                        )
+                        continue
+                    cmd = adjusted_cmd
+
                     self._reset_notifications(session)
 
                     modbus_request = create_modbus_read_request(self._device_id, *cmd)

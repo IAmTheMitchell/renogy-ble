@@ -131,6 +131,39 @@ class RenogyBaseParser:
         if self._fields_by_register is not None:
             self._fields_by_register = _index_register_fields(value)
 
+    def _iter_response_fields(self, model: str, register: int, payload_end: int | None):
+        """Yield ``(field_name, field_info, offset)`` readable from a response.
+
+        Fields declared under the response's own start register always parse at
+        their declared offset. Fields declared under another command's start
+        register are additionally included when the response payload actually
+        covers their registers -- their offset is shifted by the register
+        distance. This lets a longer read serve the fields of a command a
+        device never answers (e.g. G6 DCC units, which reject the discrete
+        status read at 0x0120 but answer a 34-word read at 0x0100 covering
+        0x0120-0x0121).
+        """
+        if self._fields_by_register is None:
+            groups: dict[int, list[tuple[str, FieldInfo]]] = {}
+            for field_name, field_info in self.register_map[model].items():
+                group = field_info.get("register")
+                if group is not None:
+                    groups.setdefault(group, []).append((field_name, field_info))
+            grouped_fields = groups.items()
+        else:
+            grouped_fields = self._fields_by_register.get(model, {}).items()
+
+        for group, fields in grouped_fields:
+            if group == register:
+                for field_name, field_info in fields:
+                    yield field_name, field_info, field_info["offset"]
+            elif payload_end is not None:
+                shift = 2 * (group - register)
+                for field_name, field_info in fields:
+                    offset = field_info["offset"] + shift
+                    if offset >= 3 and offset + field_info["length"] <= payload_end:
+                        yield field_name, field_info, offset
+
     def parse(
         self, data: bytes, model: str, register: int
     ) -> dict[str, int | float | str]:
@@ -144,7 +177,8 @@ class RenogyBaseParser:
 
         Returns:
             dict: A dictionary containing the parsed values for fields belonging to
-                the specified register
+                the specified register, plus any fields from other register blocks
+                that this response's payload happens to cover
         """
         result: dict[str, int | float | str] = {}
 
@@ -152,17 +186,15 @@ class RenogyBaseParser:
             logger.warning("Unsupported model: %s", model)
             return result
 
-        if self._fields_by_register is None:
-            fields = (
-                (field_name, field_info)
-                for field_name, field_info in self.register_map[model].items()
-                if field_info.get("register") == register
-            )
-        else:
-            fields = self._fields_by_register.get(model, {}).get(register, ())
+        # End of the Modbus payload (3-byte header + byte count), bounded by
+        # the actual frame length so a lying byte count cannot over-read.
+        payload_end: int | None = None
+        if len(data) > 2:
+            payload_end = min(3 + data[2], len(data))
 
-        for field_name, field_info in fields:
-            offset = field_info["offset"]
+        for field_name, field_info, offset in self._iter_response_fields(
+            model, register, payload_end
+        ):
             length = field_info["length"]
             byte_order = field_info["byte_order"]
             scale = field_info.get("scale")

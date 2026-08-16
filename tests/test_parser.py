@@ -464,10 +464,12 @@ def test_dcc_solar_cutoff_current_parsing():
 def test_every_dcc_field_is_reachable_by_some_command():
     """A field must live under a register some command actually asks for.
 
-    ``RenogyBaseParser.parse`` matches a field to a response by exact start
-    register, and the only call site passes a command's *start* register. A
-    field declared under any other register is therefore unreachable on every
-    device -- it can never appear in parsed output.
+    ``RenogyBaseParser.parse`` matches a field to a response primarily by
+    exact start register (the windowed fallback only triggers when a longer
+    response happens to cover another block, which no command guarantees). A
+    field declared under a register no command asks for is therefore
+    unreachable on every device -- it can never reliably appear in parsed
+    output.
     """
     from renogy_ble.ble import COMMANDS
     from renogy_ble.register_map import REGISTER_MAP
@@ -502,3 +504,65 @@ def test_dcc_status_block_parses_every_field():
     assert parsed["output_power"] == 267
     assert parsed["charging_mode"] == "solar_alternator_to_house"
     assert parsed["ignition_status"] == "disconnected"
+
+
+def _dcc_dynamic_data_frame(words: list[int]) -> bytes:
+    """Build a Modbus read response frame for the given register words."""
+    frame = bytearray([0xFF, 0x03, len(words) * 2])
+    for word in words:
+        frame.extend(word.to_bytes(2, "big"))
+    frame.extend([0x00, 0x00])  # placeholder CRC; parse() does not validate it
+    return bytes(frame)
+
+
+def test_dcc_extended_dynamic_data_serves_status_tail():
+    """A 34-word dynamic_data read covers 0x0120-0x0121, the G6 status tail.
+
+    G6-generation DCC units never answer the discrete status read at 0x0120
+    but do answer a 34-word read at 0x0100 (proven by running an RBC50D1S-G6
+    as device type "controller", whose pv command reads 34 words, for a
+    year). The windowed parse must surface charging_status and fault_high
+    from that tail while leaving the fields past 0x0121 -- which the response
+    does not cover -- absent rather than parsed from garbage.
+    """
+    from renogy_ble.renogy_parser import RenogyParser
+
+    words = [0] * 34
+    words[0] = 84  # battery_soc (0x0100)
+    words[32] = 0x0002  # 0x0120 low byte: charging_status = 2 (mppt)
+    words[33] = 0x0000  # 0x0121: fault_high
+    frame = _dcc_dynamic_data_frame(words)
+
+    # Uncached parser path.
+    parsed = DCCParser().parse_data(frame, register=256)
+    # Cached (indexed) parser path used by the RenogyParser singletons.
+    parsed_cached = RenogyParser.parse(frame, "dcc", 256)
+
+    for result in (parsed, parsed_cached):
+        assert result["battery_soc"] == 84
+        assert result["charging_status"] == "mppt"
+        assert result["fault_high"] == 0
+        for absent in (
+            "fault_low",
+            "output_power",
+            "charging_mode",
+            "ignition_status",
+        ):
+            assert absent not in result
+
+
+def test_dcc_standard_dynamic_data_has_no_status_fields():
+    """A 32-word dynamic_data read must not pick up any status field."""
+    frame = _dcc_dynamic_data_frame([0] * 32)
+
+    parsed = DCCParser().parse_data(frame, register=256)
+
+    for absent in (
+        "charging_status",
+        "fault_high",
+        "fault_low",
+        "output_power",
+        "charging_mode",
+        "ignition_status",
+    ):
+        assert absent not in parsed
