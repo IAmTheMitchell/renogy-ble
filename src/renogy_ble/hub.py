@@ -16,8 +16,8 @@ from renogy_ble.battery import (
     parse_hub_battery_pack_status,
 )
 from renogy_ble.ble import (
-    RenogyBLEDevice,
     RenogyBleClient,
+    RenogyBLEDevice,
     _PersistentBleSession,
 )
 
@@ -265,9 +265,7 @@ class RenogyCommunicationHub:
             if response is not None:
                 return response
 
-            remaining = self._timeout - (
-                asyncio.get_running_loop().time() - start_time
-            )
+            remaining = self._timeout - (asyncio.get_running_loop().time() - start_time)
             if remaining <= 0:
                 logger.debug(
                     "No Communication Hub battery response from slave 0x%02X on %s",
