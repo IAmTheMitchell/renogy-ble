@@ -4,7 +4,7 @@ import asyncio
 from typing import Callable
 from unittest.mock import MagicMock
 
-from renogy_ble.ble import RenogyBLEDevice, RenogyBleClient, modbus_crc
+from renogy_ble.ble import RenogyBleClient, RenogyBLEDevice, modbus_crc
 from renogy_ble.hub import HUB_BATTERY_SLAVE_IDS, RenogyCommunicationHub
 
 
@@ -100,20 +100,23 @@ def test_hub_discovers_multiple_slaves_and_caches_responders(monkeypatch) -> Non
     hub = RenogyCommunicationHub(client, timeout=0.01)
     device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
 
-    first = asyncio.run(hub.read_batteries(device))
+    async def _exercise():
+        first = await hub.read_batteries(device)
+        first_write_count = len(dummy_client.writes)
+        second = await hub.read_batteries(device)
+        second_writes = dummy_client.writes[first_write_count:]
+        return first, second, second_writes
+
+    first, second, second_writes = asyncio.run(_exercise())
 
     assert first.success is True
     assert first.error is None
     assert [battery.slave_id for battery in first.batteries] == [0x30, 0x31, 0x33]
     assert hub.discovered_slave_ids(device) == (0x30, 0x31, 0x33)
-    assert [request[0] for request in dummy_client.writes] == list(
+    assert [request[0] for request in dummy_client.writes[:8]] == list(
         HUB_BATTERY_SLAVE_IDS
     )
     assert dummy_client.disconnect_calls == 1
-
-    first_write_count = len(dummy_client.writes)
-    second = asyncio.run(hub.read_batteries(device))
-    second_writes = dummy_client.writes[first_write_count:]
 
     assert second.success is True
     assert second.error is None
@@ -143,24 +146,24 @@ def test_hub_rediscovery_finds_new_battery(monkeypatch) -> None:
     hub = RenogyCommunicationHub(client, timeout=0.01)
     device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
 
-    initial = asyncio.run(hub.read_batteries(device))
+    async def _exercise():
+        initial = await hub.read_batteries(device)
+        dummy_client.responders[0x32] = _hub_status_frame(0x32)
+        before_rediscovery = len(dummy_client.writes)
+        rediscovered = await hub.read_batteries(device, rediscover=True)
+        rediscovery_writes = dummy_client.writes[before_rediscovery:]
+        return initial, rediscovered, rediscovery_writes
+
+    initial, rediscovered, rediscovery_writes = asyncio.run(_exercise())
+
     assert [battery.slave_id for battery in initial.batteries] == [0x30, 0x31]
-
-    dummy_client.responders[0x32] = _hub_status_frame(0x32)
-    before_rediscovery = len(dummy_client.writes)
-
-    rediscovered = asyncio.run(hub.read_batteries(device, rediscover=True))
-    rediscovery_writes = dummy_client.writes[before_rediscovery:]
-
     assert [battery.slave_id for battery in rediscovered.batteries] == [
         0x30,
         0x31,
         0x32,
     ]
     assert hub.discovered_slave_ids(device) == (0x30, 0x31, 0x32)
-    assert [request[0] for request in rediscovery_writes] == list(
-        HUB_BATTERY_SLAVE_IDS
-    )
+    assert [request[0] for request in rediscovery_writes] == list(HUB_BATTERY_SLAVE_IDS)
 
 
 def test_hub_requests_are_read_only_pack_status_reads(monkeypatch) -> None:
@@ -210,15 +213,17 @@ def test_hub_cached_timeout_preserves_discovery_and_drops_session(monkeypatch) -
     hub = RenogyCommunicationHub(client, slave_ids=(0x30, 0x31), timeout=0.01)
     device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
 
-    initial = asyncio.run(hub.read_batteries(device))
+    async def _exercise():
+        initial = await hub.read_batteries(device)
+        del dummy_client.responders[0x31]
+        disconnects_before = dummy_client.disconnect_calls
+        result = await hub.read_batteries(device)
+        return initial, disconnects_before, result
+
+    initial, disconnects_before, result = asyncio.run(_exercise())
+
     assert initial.success is True
     assert hub.discovered_slave_ids(device) == (0x30, 0x31)
-
-    del dummy_client.responders[0x31]
-    disconnects_before = dummy_client.disconnect_calls
-
-    result = asyncio.run(hub.read_batteries(device))
-
     assert result.success is True
     assert isinstance(result.error, asyncio.TimeoutError)
     assert [battery.slave_id for battery in result.batteries] == [0x30]
