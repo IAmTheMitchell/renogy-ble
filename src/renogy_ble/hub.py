@@ -102,8 +102,12 @@ class RenogyCommunicationHub:
                 return RenogyHubBatteryReadResult(False, [], exc)
 
             cached_slave_ids = self._discovered_slave_ids.get(device.address)
-            discovering = rediscover or not cached_slave_ids
-            target_slave_ids = self._slave_ids if discovering else cached_slave_ids
+            if rediscover or not cached_slave_ids:
+                discovering = True
+                target_slave_ids = self._slave_ids
+            else:
+                discovering = False
+                target_slave_ids = cached_slave_ids
             probe_timed_out = False
 
             try:

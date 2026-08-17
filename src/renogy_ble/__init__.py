@@ -32,6 +32,12 @@ from renogy_ble.ble import (
     create_modbus_write_request,
     modbus_crc,
 )
+from renogy_ble.hub import (
+    HUB_BATTERY_SLAVE_IDS,
+    RenogyCommunicationHub,
+    RenogyHubBattery,
+    RenogyHubBatteryReadResult,
+)
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
@@ -60,6 +66,7 @@ __all__ = [
     "BATTERY_VARIANT_RNGPRO",
     "DEFAULT_DEVICE_ID",
     "DEFAULT_DEVICE_TYPE",
+    "HUB_BATTERY_SLAVE_IDS",
     "LOAD_CONTROL_REGISTER",
     "MAX_NOTIFICATION_WAIT_TIME",
     "RENOGY_READ_CHAR_UUID",
@@ -68,6 +75,9 @@ __all__ = [
     "RenogyBleClient",
     "RenogyBleReadResult",
     "RenogyBleWriteResult",
+    "RenogyCommunicationHub",
+    "RenogyHubBattery",
+    "RenogyHubBatteryReadResult",
     "RenogyParser",
     "clean_device_name",
     "create_modbus_read_request",
