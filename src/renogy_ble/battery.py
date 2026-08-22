@@ -42,6 +42,9 @@ BATTERY_COMMANDS: dict[str, tuple[int, int]] = {
     "mosfet_status": (0x13EC, 0x08),
 }
 
+HUB_BATTERY_PACK_STATUS_REGISTER = 0x13B2
+HUB_BATTERY_PACK_STATUS_WORD_COUNT = 0x06
+
 
 def clean_battery_text(value: bytes) -> str:
     """Decode ASCII battery metadata and strip padding."""
@@ -110,12 +113,18 @@ def _is_legacy_battery_name(name: str) -> bool:
 
 @cache
 def build_battery_command(
-    variant: BatteryVariant, register: int, word_count: int
+    variant: BatteryVariant,
+    register: int,
+    word_count: int,
+    device_id: int | None = None,
 ) -> bytes:
-    """Build the read request for a battery command."""
+    """Build a battery read request, optionally targeting a specific device ID."""
+    target_device_id = (
+        BATTERY_PROTOCOL_DEVICE_IDS[variant] if device_id is None else device_id
+    )
     frame = bytearray(
         [
-            BATTERY_PROTOCOL_DEVICE_IDS[variant],
+            target_device_id,
             0x03,
             (register >> 8) & 0xFF,
             register & 0xFF,
@@ -190,6 +199,31 @@ def parse_battery_pack_status(
         "battery_capacity": battery_capacity,
         "battery_cycle_count": battery_cycle_count,
         "battery_power": round(battery_voltage * battery_current, 3),
+    }
+
+    if battery_capacity > 0:
+        parsed["battery_percentage"] = round(
+            (battery_remaining_capacity / battery_capacity) * 100, 1
+        )
+
+    return parsed
+
+
+def parse_hub_battery_pack_status(data: bytes) -> dict[str, Any]:
+    """Parse the validated read-only Communication Hub battery status frame."""
+    expected_length = 3 + (HUB_BATTERY_PACK_STATUS_WORD_COUNT * 2) + 2
+    if len(data) < expected_length or data[2] < HUB_BATTERY_PACK_STATUS_WORD_COUNT * 2:
+        return {}
+
+    battery_voltage = int.from_bytes(data[5:7], byteorder="big") / 10
+    battery_remaining_capacity = int.from_bytes(data[7:11], byteorder="big") / 1000
+    battery_capacity = int.from_bytes(data[11:15], byteorder="big") / 1000
+
+    parsed: dict[str, Any] = {
+        "slave_id": data[0],
+        "battery_voltage": round(battery_voltage, 1),
+        "battery_remaining_capacity": round(battery_remaining_capacity, 3),
+        "battery_capacity": battery_capacity,
     }
 
     if battery_capacity > 0:

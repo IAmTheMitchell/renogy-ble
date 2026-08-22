@@ -12,6 +12,7 @@ from renogy_ble.battery import (
     parse_battery_device_info,
     parse_battery_mosfet_status,
     parse_battery_pack_status,
+    parse_hub_battery_pack_status,
 )
 
 
@@ -57,6 +58,18 @@ def test_build_battery_command_uses_variant_device_id() -> None:
 
     assert legacy[:6] == bytes([0x30, 0x03, 0x13, 0xB2, 0x00, 0x07])
     assert pro[:6] == bytes([0xFF, 0x03, 0x13, 0xB2, 0x00, 0x07])
+
+
+def test_build_battery_command_allows_explicit_hub_slave_id() -> None:
+    """Hub reads should target a selected Modbus slave without changing defaults."""
+    command = build_battery_command(
+        BATTERY_VARIANT_LEGACY,
+        0x13B2,
+        0x0006,
+        device_id=0x31,
+    )
+
+    assert command[:6] == bytes([0x31, 0x03, 0x13, 0xB2, 0x00, 0x06])
 
 
 def test_parse_battery_device_info() -> None:
@@ -113,6 +126,41 @@ def test_parse_battery_pack_status_preserves_fractional_capacity() -> None:
     assert parsed["battery_remaining_capacity"] == 50.0
     assert parsed["battery_capacity"] == 99.5
     assert parsed["battery_percentage"] == 50.3
+
+
+def test_parse_hub_battery_pack_status_from_captured_response() -> None:
+    """Parse validated Hub voltage and capacity fields without guessing current."""
+    frame = bytes.fromhex("30030c014601f80000c2840000c34d96d6")
+
+    parsed = parse_hub_battery_pack_status(frame)
+
+    assert parsed == {
+        "slave_id": 0x30,
+        "battery_voltage": 50.4,
+        "battery_remaining_capacity": 49.796,
+        "battery_capacity": 49.997,
+        "battery_percentage": 99.6,
+    }
+    assert "battery_current" not in parsed
+    assert "battery_power" not in parsed
+
+
+def test_parse_hub_battery_pack_status_preserves_slave_identity() -> None:
+    """Each Hub response should retain the Modbus slave that supplied the data."""
+    frame = bytes.fromhex("31030c013201f800009f8a0000c34b0ca9")
+
+    parsed = parse_hub_battery_pack_status(frame)
+
+    assert parsed["slave_id"] == 0x31
+    assert parsed["battery_voltage"] == 50.4
+    assert parsed["battery_remaining_capacity"] == 40.842
+    assert parsed["battery_capacity"] == 49.995
+    assert parsed["battery_percentage"] == 81.7
+
+
+def test_parse_hub_battery_pack_status_rejects_short_frame() -> None:
+    """Incomplete Hub responses should not produce partial telemetry."""
+    assert parse_hub_battery_pack_status(bytes.fromhex("30030c014601f8")) == {}
 
 
 def test_parse_battery_cell_status_rngr_bp_uses_tenth_volt_scale() -> None:
