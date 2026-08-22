@@ -9,12 +9,14 @@ BATTERY_DEVICE_TYPE = "battery"
 BATTERY_VARIANT_LEGACY = "legacy"
 BATTERY_VARIANT_PRO = "pro"
 # RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) share the Pro register map and
-# device id but use different field scaling than RNGRBP/RNGC "pro" batteries:
-# current in 0.01 A units (not 0.1 A) and cell voltages in 0.1 V units (not mV).
+# device id but use 0.01 A current units rather than the Pro variant's 0.1 A.
+# Their 0.1 V cell units match RNGRBP; RNGC scaling remains unconfirmed.
 BATTERY_VARIANT_RNGPRO = "rngpro"
 BatteryVariant = Literal["legacy", "pro", "rngpro"]
+BatteryCellVoltageDivisor = Literal[10, 1000]
 
-BATTERY_PRO_NAME_PREFIXES = ("RNGRBP", "RNGC")
+BATTERY_RNGRBP_NAME_PREFIX = "RNGRBP"
+BATTERY_PRO_NAME_PREFIXES = (BATTERY_RNGRBP_NAME_PREFIX, "RNGC")
 BATTERY_RNGPRO_NAME_PREFIXES = ("RNGPRO",)
 BATTERY_LEGACY_NAME_PREFIX = "BT-TH-"
 BATTERY_LEGACY_NAME_MARKERS = ("BATT", "BATTERY")
@@ -44,6 +46,24 @@ BATTERY_COMMANDS: dict[str, tuple[int, int]] = {
 def clean_battery_text(value: bytes) -> str:
     """Decode ASCII battery metadata and strip padding."""
     return value.decode("ascii", errors="ignore").strip("\x00").strip()
+
+
+def is_rngr_bp_battery_name(name: str | None) -> bool:
+    """Return whether an advertisement belongs to the RNGRBP family."""
+    return (name or "").strip().startswith(BATTERY_RNGRBP_NAME_PREFIX)
+
+
+def battery_cell_voltage_divisor(
+    name: str | None,
+    *,
+    variant: BatteryVariant,
+) -> BatteryCellVoltageDivisor | None:
+    """Return a confirmed cell-voltage divisor, if the family identifies one."""
+    if variant == BATTERY_VARIANT_RNGPRO or is_rngr_bp_battery_name(name):
+        return 10
+    if variant != BATTERY_VARIANT_PRO or (name or "").strip().startswith("RNGC"):
+        return 1000
+    return None
 
 
 def detect_battery_variant(
@@ -184,6 +204,7 @@ def parse_battery_cell_status(
     data: bytes,
     *,
     variant: BatteryVariant,
+    cell_voltage_divisor: BatteryCellVoltageDivisor | None = None,
 ) -> dict[str, Any]:
     """Parse cell voltages and temperature sensors."""
     parsed: dict[str, Any] = {}
@@ -191,13 +212,21 @@ def parse_battery_cell_status(
     cell_count = int.from_bytes(data[3:5], byteorder="big")
     parsed["cell_count"] = cell_count
 
-    # Cell voltage units differ by protocol variant: legacy/pro report
-    # millivolts, while RNGPRO-family batteries report 0.1 V units.
-    cell_divisor = 10 if variant == BATTERY_VARIANT_RNGPRO else 1000
-    cell_values = [
-        int.from_bytes(data[start : start + 2], byteorder="big") / cell_divisor
+    raw_cell_values = [
+        int.from_bytes(data[start : start + 2], byteorder="big")
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
     ]
+    cell_divisor = cell_voltage_divisor or battery_cell_voltage_divisor(
+        None, variant=variant
+    )
+    if cell_divisor is None:
+        # Manufacturer-only discovery does not identify whether a Pro pack is
+        # RNGRBP (0.1 V units) or RNGC (millivolts). A positive raw value below
+        # 100 would be under 0.1 V with millivolt encoding, so infer only that
+        # unambiguous case and preserve the millivolt default otherwise.
+        positive_values = [value for value in raw_cell_values if value > 0]
+        cell_divisor = 10 if positive_values and max(positive_values) < 100 else 1000
+    cell_values = [value / cell_divisor for value in raw_cell_values]
     if cell_values:
         parsed["cell_voltages"] = cell_values
         parsed["cell_voltage_min"] = min(cell_values)
