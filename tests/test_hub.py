@@ -231,6 +231,53 @@ def test_hub_cached_timeout_preserves_discovery_and_drops_session(monkeypatch) -
     assert dummy_client.disconnect_calls == disconnects_before + 1
 
 
+def test_hub_cached_timeout_reconnects_before_polling_later_batteries(
+    monkeypatch,
+) -> None:
+    """A missing middle battery should not starve healthy later cached batteries."""
+    responders = {
+        0x30: _hub_status_frame(0x30),
+        0x31: _hub_status_frame(0x31),
+        0x32: _hub_status_frame(0x32),
+    }
+    dummy_client = _DummyHubClient(responders)
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        transport_mode="persistent_session",
+        max_notification_wait_time=0.01,
+    )
+    hub = RenogyCommunicationHub(
+        client,
+        slave_ids=(0x30, 0x31, 0x32),
+        timeout=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    async def _exercise():
+        initial = await hub.read_batteries(device)
+        del dummy_client.responders[0x31]
+        disconnects_before = dummy_client.disconnect_calls
+        result = await hub.read_batteries(device)
+        return initial, disconnects_before, result
+
+    initial, disconnects_before, result = asyncio.run(_exercise())
+
+    assert initial.success is True
+    assert result.success is True
+    assert isinstance(result.error, asyncio.TimeoutError)
+    assert [battery.slave_id for battery in result.batteries] == [0x30, 0x32]
+    assert hub.discovered_slave_ids(device) == (0x30, 0x31, 0x32)
+    assert dummy_client.disconnect_calls == disconnects_before + 2
+
+
 def test_hub_empty_discovery_reports_no_batteries(monkeypatch) -> None:
     dummy_client = _DummyHubClient({})
 

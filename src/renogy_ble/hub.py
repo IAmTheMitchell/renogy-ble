@@ -111,7 +111,7 @@ class RenogyCommunicationHub:
             probe_timed_out = False
 
             try:
-                for slave_id in target_slave_ids:
+                for index, slave_id in enumerate(target_slave_ids):
                     if discovering:
                         response = await self._probe_battery_status(
                             session,
@@ -132,7 +132,24 @@ class RenogyCommunicationHub:
                                 error = asyncio.TimeoutError(
                                     f"Timed out reading Hub battery 0x{slave_id:02X}"
                                 )
-                                break
+                                if index == len(target_slave_ids) - 1:
+                                    break
+
+                                # The late response cannot be matched safely to the
+                                # next request. Reconnect before continuing the poll.
+                                await self._client._close_session(
+                                    device.address,
+                                    device.name,
+                                    session,
+                                    remove=False,
+                                )
+                                try:
+                                    await self._client._ensure_session_ready(
+                                        device, session
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    error = exc
+                                    break
                             continue
 
                     parsed = parse_hub_battery_pack_status(response)
