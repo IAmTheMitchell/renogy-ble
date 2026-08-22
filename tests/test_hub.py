@@ -187,8 +187,8 @@ def test_hub_requests_are_read_only_pack_status_reads(monkeypatch) -> None:
     assert len(dummy_client.writes) == 1
     request = dummy_client.writes[0]
     assert request[:6] == bytes([0x30, 0x03, 0x13, 0xB2, 0x00, 0x06])
-    assert "battery_current" not in result.batteries[0].parsed_data
-    assert "battery_power" not in result.batteries[0].parsed_data
+    assert result.batteries[0].parsed_data["battery_current"] == 3.26
+    assert result.batteries[0].parsed_data["battery_power"] == 164.304
 
 
 def test_hub_cached_timeout_preserves_discovery_and_drops_session(monkeypatch) -> None:
