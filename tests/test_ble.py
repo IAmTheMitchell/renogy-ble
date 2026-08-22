@@ -2119,3 +2119,175 @@ def test_update_parsed_data_rejects_bit_flipped_payload(monkeypatch):
     assert result is False
     # The pre-existing valid reading must be preserved, not overwritten with garbage.
     assert device.parsed_data.get("battery_voltage") == 13.0
+
+
+def _dcc_g6_dummy_client_and_requests():
+    """Build a DummyClient that answers like an RBC50D1S-G6 charger."""
+    requests: list[tuple[int, int]] = []
+
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.disconnect_calls = 0
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            register = (payload[2] << 8) | payload[3]
+            word_count = (payload[4] << 8) | payload[5]
+            requests.append((register, word_count))
+
+            if register == 12:
+                self._notify_handler(
+                    None,
+                    _modbus_ascii_response(DEFAULT_DEVICE_ID, "RBC50D1S-G6", 8),
+                )
+            elif register == 256:
+                # 34-word dynamic_data with the status tail: 0x0120 low byte
+                # carries charging_status 2 (mppt), 0x0121 carries fault_high.
+                words = [0] * word_count
+                if word_count >= 34:
+                    words[32] = 0x0002
+                    words[33] = 0x0000
+                self._notify_handler(
+                    None, _modbus_read_response(DEFAULT_DEVICE_ID, words)
+                )
+            elif register == 57345:
+                self._notify_handler(
+                    None, _modbus_read_response(DEFAULT_DEVICE_ID, [5000])
+                )
+            # register 288 (status) deliberately gets NO reply, like real G6
+            # hardware -- reaching it at all is the regression this guards.
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    return DummyClient(), requests
+
+
+_DCC_TEST_COMMANDS = {
+    "dcc": {
+        "device_info": (3, 12, 8),
+        "dynamic_data": (3, 256, 32),
+        "status": (3, 288, 8),
+        "current_limit": (3, 57345, 1),
+    }
+}
+
+
+def test_g6_dcc_skips_status_and_reads_it_from_dynamic_data(monkeypatch):
+    """A -G6 DCC must never be sent the status command it cannot answer.
+
+    G6 firmware times out the discrete 0x0120 read; the timeout would abort
+    every later command and tear down the session. The model parsed from
+    device_info in the same poll must instead extend dynamic_data to 34 words
+    and skip status entirely, with charging_status served from the tail.
+    """
+    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        commands=_DCC_TEST_COMMANDS,
+        max_notification_wait_time=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(name="BT-TH-A58A8FD4"), device_type="dcc")
+
+    result = asyncio.run(client.read_device(device))
+
+    requested_registers = [register for register, _words in requests]
+    assert 288 not in requested_registers
+    assert (256, 34) in requests
+    assert result.parsed_data["model"] == "RBC50D1S-G6"
+    assert result.parsed_data["charging_status"] == "mppt"
+    assert result.parsed_data["fault_high"] == 0
+    # Commands after "status" must still run -- on current code the status
+    # timeout would have broken the loop before current_limit.
+    assert result.parsed_data["max_charging_current"] == 50.0
+
+
+def test_g6_dcc_reads_device_info_before_reordered_custom_commands(monkeypatch):
+    """Custom DCC command order must not bypass G6 model detection."""
+    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    reordered_commands = {
+        "dcc": {
+            "status": (3, 288, 8),
+            "dynamic_data": (3, 256, 32),
+            "current_limit": (3, 57345, 1),
+            "device_info": (3, 12, 8),
+        }
+    }
+    client = RenogyBleClient(
+        commands=reordered_commands,
+        max_notification_wait_time=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(name="BT-TH-A58A8FD4"), device_type="dcc")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert requests[0] == (12, 8)
+    assert (288, 8) not in requests
+    assert (256, 34) in requests
+    assert result.parsed_data["charging_status"] == "mppt"
+    assert result.parsed_data["max_charging_current"] == 50.0
+
+
+def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
+    """A non-G6 DCC keeps the 32-word dynamic read and the status command."""
+    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    # Same frames, but the device identifies as a non-G6 DCC50S-family model.
+    original_write = dummy_client.write_gatt_char
+
+    async def _write(_uuid, payload):
+        register = (payload[2] << 8) | payload[3]
+        if register == 12:
+            requests.append((register, (payload[4] << 8) | payload[5]))
+            dummy_client._notify_handler(
+                None,
+                _modbus_ascii_response(DEFAULT_DEVICE_ID, "RBC2125DS-21W", 8),
+            )
+            return
+        await original_write(_uuid, payload)
+
+    dummy_client.write_gatt_char = _write
+
+    client = RenogyBleClient(
+        commands=_DCC_TEST_COMMANDS,
+        max_notification_wait_time=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(name="BT-TH-DCC01"), device_type="dcc")
+
+    asyncio.run(client.read_device(device))
+
+    assert (256, 32) in requests
+    assert (288, 8) in requests
