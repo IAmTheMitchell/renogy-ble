@@ -215,6 +215,7 @@ def parse_hub_battery_pack_status(data: bytes) -> dict[str, Any]:
     if len(data) < expected_length or data[2] < HUB_BATTERY_PACK_STATUS_WORD_COUNT * 2:
         return {}
 
+    battery_current = int.from_bytes(data[3:5], byteorder="big", signed=True) / 100
     battery_voltage = int.from_bytes(data[5:7], byteorder="big") / 10
     battery_remaining_capacity = int.from_bytes(data[7:11], byteorder="big") / 1000
     battery_capacity = int.from_bytes(data[11:15], byteorder="big") / 1000
@@ -222,6 +223,8 @@ def parse_hub_battery_pack_status(data: bytes) -> dict[str, Any]:
     parsed: dict[str, Any] = {
         "slave_id": data[0],
         "battery_voltage": round(battery_voltage, 1),
+        "battery_current": round(battery_current, 2),
+        "battery_power": round(battery_voltage * battery_current, 3),
         "battery_remaining_capacity": round(battery_remaining_capacity, 3),
         "battery_capacity": battery_capacity,
     }
