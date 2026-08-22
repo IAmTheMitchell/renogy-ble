@@ -126,6 +126,20 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+The RIV4835CSH1S uses a different register layout and does not answer the
+standard model probe. Select its profile explicitly when constructing the
+device:
+
+```python
+from renogy_ble import RIV4835CSH1S_MODEL, RenogyBLEDevice
+
+renogy_device = RenogyBLEDevice(
+    ble_device,
+    device_type="inverter",
+    model_hint=RIV4835CSH1S_MODEL,
+)
+```
+
 ### Battery Reads
 
 Supported Renogy batteries use a dedicated command set and parser. Set
