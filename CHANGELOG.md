@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## [2.5.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.4.1...v2.5.0) (2026-08-22)
+
+
+### Features
+
+* add Communication Hub multi-battery support ([#148](https://github.com/IAmTheMitchell/renogy-ble/issues/148)) ([6c29d56](https://github.com/IAmTheMitchell/renogy-ble/commit/6c29d562b686d935bbb85adc00e892de312e511f))
+* add RIV4835CSH1S inverter profile ([#142](https://github.com/IAmTheMitchell/renogy-ble/issues/142)) ([ded72d4](https://github.com/IAmTheMitchell/renogy-ble/commit/ded72d4bc8206d099af6ea7627f34395547b7a8c))
+* make failure grace and reconnect interval configurable per device ([#126](https://github.com/IAmTheMitchell/renogy-ble/issues/126)) ([72648f0](https://github.com/IAmTheMitchell/renogy-ble/commit/72648f07a763d5922a111286cce66307b3c797da))
+* read REGO inverter charging, solar, and setpoint registers ([#125](https://github.com/IAmTheMitchell/renogy-ble/issues/125)) ([15a3e69](https://github.com/IAmTheMitchell/renogy-ble/commit/15a3e69216afcbacfb7c249eb5063037d5c3d5ea))
+
+
+### Bug Fixes
+
+* read RNGRBP batteries and scale pro cell voltage as 0.1 V (follow-on to [#120](https://github.com/IAmTheMitchell/renogy-ble/issues/120)) ([#124](https://github.com/IAmTheMitchell/renogy-ble/issues/124)) ([0a11218](https://github.com/IAmTheMitchell/renogy-ble/commit/0a11218368b35b087a23c1db8486b114c158d8fe))
+* serve the DCC status tail from dynamic_data on G6 units ([#147](https://github.com/IAmTheMitchell/renogy-ble/issues/147)) ([cf993b3](https://github.com/IAmTheMitchell/renogy-ble/commit/cf993b3d8a50a08ff3dca9dfbaa450f8e108b9e2))
+
+
+### Performance Improvements
+
+* reuse indexed register parsers ([#141](https://github.com/IAmTheMitchell/renogy-ble/issues/141)) ([1efe2f1](https://github.com/IAmTheMitchell/renogy-ble/commit/1efe2f1ed2409ac130c22497c709e544e98376df))
+
 ## [2.4.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.4.0...v2.4.1) (2026-08-07)
 
 
