@@ -592,7 +592,13 @@ class RenogyBleClient:
             try:
                 logger.debug("Connected to device %s", device.name)
 
-                for cmd_name, cmd in commands.items():
+                command_items = list(commands.items())
+                if device.device_type == "dcc":
+                    # Model-specific DCC command handling needs device_info first.
+                    # Preserve the caller's order for every other command.
+                    command_items.sort(key=lambda item: item[1][1] != 12)
+
+                for cmd_name, cmd in command_items:
                     adjusted_cmd = self._adjust_dcc_command_for_model(
                         device, cmd_name, cmd
                     )

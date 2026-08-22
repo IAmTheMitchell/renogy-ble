@@ -2152,6 +2152,40 @@ def test_g6_dcc_skips_status_and_reads_it_from_dynamic_data(monkeypatch):
     assert result.parsed_data["max_charging_current"] == 50.0
 
 
+def test_g6_dcc_reads_device_info_before_reordered_custom_commands(monkeypatch):
+    """Custom DCC command order must not bypass G6 model detection."""
+    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    reordered_commands = {
+        "dcc": {
+            "status": (3, 288, 8),
+            "dynamic_data": (3, 256, 32),
+            "current_limit": (3, 57345, 1),
+            "device_info": (3, 12, 8),
+        }
+    }
+    client = RenogyBleClient(
+        commands=reordered_commands,
+        max_notification_wait_time=0.01,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(name="BT-TH-A58A8FD4"), device_type="dcc")
+
+    result = asyncio.run(client.read_device(device))
+
+    assert requests[0] == (12, 8)
+    assert (288, 8) not in requests
+    assert (256, 34) in requests
+    assert result.parsed_data["charging_status"] == "mppt"
+    assert result.parsed_data["max_charging_current"] == 50.0
+
+
 def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
     """A non-G6 DCC keeps the 32-word dynamic read and the status command."""
     dummy_client, requests = _dcc_g6_dummy_client_and_requests()
