@@ -129,7 +129,7 @@ def test_parse_battery_pack_status_preserves_fractional_capacity() -> None:
 
 
 def test_parse_hub_battery_pack_status_from_captured_response() -> None:
-    """Parse validated Hub voltage and capacity fields without guessing current."""
+    """Parse validated Hub pack telemetry from a captured response."""
     frame = bytes.fromhex("30030c014601f80000c2840000c34d96d6")
 
     parsed = parse_hub_battery_pack_status(frame)
@@ -137,12 +137,27 @@ def test_parse_hub_battery_pack_status_from_captured_response() -> None:
     assert parsed == {
         "slave_id": 0x30,
         "battery_voltage": 50.4,
+        "battery_current": 3.26,
+        "battery_power": 164.304,
         "battery_remaining_capacity": 49.796,
         "battery_capacity": 49.997,
         "battery_percentage": 99.6,
     }
-    assert "battery_current" not in parsed
-    assert "battery_power" not in parsed
+
+
+def test_parse_hub_battery_pack_status_preserves_signed_current() -> None:
+    """Hub current and power should preserve charging and discharging direction."""
+    payload = bytearray(12)
+    payload[0:2] = (-123).to_bytes(2, "big", signed=True)
+    payload[2:4] = (512).to_bytes(2, "big")
+    payload[4:8] = (40000).to_bytes(4, "big")
+    payload[8:12] = (50000).to_bytes(4, "big")
+    frame = _battery_frame(0x30, bytes(payload))
+
+    parsed = parse_hub_battery_pack_status(frame)
+
+    assert parsed["battery_current"] == -1.23
+    assert parsed["battery_power"] == -62.976
 
 
 def test_parse_hub_battery_pack_status_preserves_slave_identity() -> None:
