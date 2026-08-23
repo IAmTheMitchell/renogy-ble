@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.6.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.5.0...v2.6.0) (2026-08-23)
+
+
+### Features
+
+* expose Communication Hub battery current and power ([#152](https://github.com/IAmTheMitchell/renogy-ble/issues/152)) ([6f9b1e7](https://github.com/IAmTheMitchell/renogy-ble/commit/6f9b1e78e77ce074ca02644359fe7f50c45f01d8))
+
 ## [2.5.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.4.1...v2.5.0) (2026-08-22)
 
 
