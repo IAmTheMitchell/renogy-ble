@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.6.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.6.0...v2.6.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* recover controller polling after read timeout ([#159](https://github.com/IAmTheMitchell/renogy-ble/issues/159)) ([d7fb366](https://github.com/IAmTheMitchell/renogy-ble/commit/d7fb3666ff4fc4c9def5899e8521aa5af89fd203))
+
 ## [2.6.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.5.0...v2.6.0) (2026-08-23)
 
 
