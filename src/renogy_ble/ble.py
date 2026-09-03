@@ -614,7 +614,7 @@ class RenogyBleClient:
                     # Preserve the caller's order for every other command.
                     command_items.sort(key=lambda item: item[1][1] != 12)
 
-                for cmd_name, cmd in command_items:
+                for command_index, (cmd_name, cmd) in enumerate(command_items):
                     adjusted_cmd = self._adjust_dcc_command_for_model(
                         device, cmd_name, cmd
                     )
@@ -655,7 +655,37 @@ class RenogyBleClient:
                     except asyncio.TimeoutError:
                         # The response stream is desynchronized; a late reply to
                         # this command would be misread as the next command's.
-                        break
+                        if (
+                            device.device_type != DEFAULT_DEVICE_TYPE
+                            or command_index == len(command_items) - 1
+                        ):
+                            break
+
+                        # Some controllers do not answer every register block.
+                        # Continue on a new connection so a delayed reply cannot
+                        # be mistaken for the next command's response.
+                        await self._close_session(
+                            device.address,
+                            device.name,
+                            session,
+                            remove=False,
+                        )
+                        try:
+                            await self._ensure_session_ready(device, session)
+                        except Exception as reconnect_error:
+                            logger.info(
+                                "Failed to recover BLE session for device %s: %s",
+                                device.name,
+                                str(reconnect_error),
+                            )
+                            error = reconnect_error
+                            break
+                        logger.debug(
+                            "Reconnected to device %s after %s timed out",
+                            device.name,
+                            cmd_name,
+                        )
+                        continue
 
                     logger.debug(
                         "Received valid %s data length: %s",
@@ -681,7 +711,7 @@ class RenogyBleClient:
                             device.name,
                         )
 
-                if not any_command_succeeded:
+                if not any_command_succeeded and error is None:
                     error = RuntimeError("No commands completed successfully")
             except BleakError as exc:
                 logger.info("BLE error with device %s: %s", device.name, str(exc))
@@ -1418,7 +1448,13 @@ class RenogyBleClient:
         if session.notify_started:
             return
 
+        notification_client = session.client
+
         def notification_handler(_sender, data):
+            # Ignore a callback queued by a connection that was discarded after
+            # a timeout. Its response cannot be matched to a current request.
+            if session.client is not notification_client:
+                return
             session.notification_data.extend(data)
             session.notification_event.set()
 
