@@ -1728,6 +1728,92 @@ def test_read_device_stops_after_read_timeout_instead_of_misreading_reply(monkey
     assert dummy_client.disconnect_calls == 1
 
 
+@pytest.mark.parametrize("transport_mode", ["per_operation", "persistent_session"])
+def test_controller_reconnects_and_continues_after_device_info_timeout(
+    monkeypatch, transport_mode
+):
+    """A controller with optional metadata must still return telemetry."""
+
+    class DummyClient:
+        def __init__(self, *, device_info_times_out: bool):
+            self.is_connected = True
+            self.device_info_times_out = device_info_times_out
+            self.disconnect_calls = 0
+            self.requested_registers: list[int] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            register = int.from_bytes(payload[2:4], "big")
+            self.requested_registers.append(register)
+            if register == 12 and self.device_info_times_out:
+                return
+
+            word_count = int.from_bytes(payload[4:6], "big")
+            values = [0] * word_count
+            if register == 26:
+                values = [DEFAULT_DEVICE_ID]
+            elif register == 57348:
+                values = [100]
+            elif register == 256:
+                values[:3] = [75, 128, 250]
+            self._notify_handler(
+                None,
+                _modbus_read_response(DEFAULT_DEVICE_ID, values),
+            )
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    clients = [
+        DummyClient(device_info_times_out=True),
+        DummyClient(device_info_times_out=False),
+    ]
+    establish_calls = 0
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        nonlocal establish_calls
+        client = clients[establish_calls]
+        establish_calls += 1
+        return client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        max_notification_wait_time=0.01,
+        transport_mode=transport_mode,
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+
+    async def _run():
+        result = await client.read_device(device)
+        await client.close()
+        return result
+
+    result = asyncio.run(_run())
+
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data["battery_voltage"] == 12.8
+    assert "model" not in result.parsed_data
+    assert establish_calls == 2
+    assert clients[0].requested_registers == [12]
+    assert clients[1].requested_registers == [26, 57348, 256]
+    assert clients[0].disconnect_calls == 1
+    assert clients[1].disconnect_calls == 1
+
+
 def test_read_timeout_reconnects_before_next_persistent_session_poll(monkeypatch):
     """A timed-out persistent session must not be reused by the next poll."""
 
