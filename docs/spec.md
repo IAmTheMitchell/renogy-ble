@@ -120,3 +120,14 @@ and installed with:
 ```bash
 pip install renogy-ble
 ```
+
+
+## Optional controller metadata
+
+Controller polls tolerate an unanswered `device_info` read by reconnecting before
+reading the remaining commands. After three consecutive metadata timeouts on
+polls that successfully parse PV telemetry, the library skips `device_info` for
+one hour. It then probes again; another timeout with working telemetry starts
+another one-hour cooldown. A successful metadata read or a poll without valid PV
+telemetry resets the cooldown. State belongs to the device object and is reset
+when that object is recreated. Other device families retain their existing reads.

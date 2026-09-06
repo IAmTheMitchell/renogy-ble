@@ -2377,3 +2377,120 @@ def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
 
     assert (256, 32) in requests
     assert (288, 8) in requests
+
+
+@pytest.mark.parametrize("transport_mode", ["per_operation", "persistent_session"])
+def test_controller_metadata_cooldown_retries_and_recovers(monkeypatch, transport_mode):
+    """Only repeated metadata failures with working telemetry trigger backoff."""
+    telemetry_fails = False
+
+    class DummyClient:
+        def __init__(self, *, device_info_times_out: bool):
+            self.is_connected = True
+            self.device_info_times_out = device_info_times_out
+            self.disconnect_calls = 0
+            self.requested_registers: list[int] = []
+            self._notify_handler: Callable[[object | None, bytes], None] | None = None
+
+        async def start_notify(self, *_args, **_kwargs):
+            self._notify_handler = _args[1]
+
+        async def write_gatt_char(self, _uuid, payload):
+            if self._notify_handler is None:
+                raise AssertionError("Notify handler was not set.")
+
+            register = int.from_bytes(payload[2:4], "big")
+            self.requested_registers.append(register)
+            if (register == 12 and self.device_info_times_out) or (
+                register == 256 and telemetry_fails
+            ):
+                return
+
+            word_count = int.from_bytes(payload[4:6], "big")
+            values = [0] * word_count
+            if register == 26:
+                values = [DEFAULT_DEVICE_ID]
+            elif register == 57348:
+                values = [100]
+            elif register == 256:
+                values[:3] = [75, 128, 250]
+            self._notify_handler(
+                None,
+                _modbus_read_response(DEFAULT_DEVICE_ID, values),
+            )
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+            self.is_connected = False
+
+    from renogy_ble import ble as ble_module
+
+    now = 100.0
+    metadata_fails = True
+    clients = []
+
+    async def establish(*_args, **_kwargs):
+        connection = DummyClient(device_info_times_out=metadata_fails)
+        clients.append(connection)
+        return connection
+
+    monkeypatch.setattr(ble_module, "establish_connection", establish)
+    monkeypatch.setattr(ble_module, "monotonic", lambda: now)
+    client = RenogyBleClient(
+        max_notification_wait_time=0.001, transport_mode=transport_mode
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+
+    async def poll():
+        before = sum(c.requested_registers.count(12) for c in clients)
+        result = await client.read_device(device)
+        after = sum(c.requested_registers.count(12) for c in clients)
+        return result, after - before
+
+    async def run():
+        nonlocal now, metadata_fails, telemetry_fails
+        # General communication failures must not accumulate metadata backoff.
+        telemetry_fails = True
+        for _ in range(4):
+            _, attempts = await poll()
+            assert attempts == 1
+        telemetry_fails = False
+        for _ in range(3):
+            result, attempts = await poll()
+            assert result.success and result.parsed_data["battery_voltage"] == 12.8
+            assert attempts == 1
+        for _ in range(2):
+            result, attempts = await poll()
+            assert result.success and attempts == 0
+        # Retry after one hour; another failure starts another cooldown.
+        now += 3600
+        _, attempts = await poll()
+        assert attempts == 1
+        _, attempts = await poll()
+        assert attempts == 0
+        # A telemetry failure cancels the cooldown and allows another probe.
+        telemetry_fails = True
+        await poll()
+        telemetry_fails = False
+        _, attempts = await poll()
+        assert attempts == 1
+        # A valid metadata response resets the consecutive timeout count.
+        metadata_fails = False
+        for c in clients:
+            c.device_info_times_out = False
+        _, attempts = await poll()
+        assert attempts == 1
+        metadata_fails = True
+        for c in clients:
+            c.device_info_times_out = True
+        for _ in range(3):
+            _, attempts = await poll()
+            assert attempts == 1
+        _, attempts = await poll()
+        assert attempts == 0
+        await client.close()
+
+    asyncio.run(run())
