@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## [2.7.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.6.1...v2.7.0) (2026-09-10)
+
+
+### Features
+
+* add RIV4835 Program 28 readback ([#161](https://github.com/IAmTheMitchell/renogy-ble/issues/161)) ([0f07928](https://github.com/IAmTheMitchell/renogy-ble/commit/0f0792834aaabe51d42196ac89309413ea3393a0))
+
+
+### Bug Fixes
+
+* back off repeated controller metadata timeouts ([#162](https://github.com/IAmTheMitchell/renogy-ble/issues/162)) ([6bca809](https://github.com/IAmTheMitchell/renogy-ble/commit/6bca809d97c0ff40ff0b26b91a680945075604e0))
+
 ## [2.6.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.6.0...v2.6.1) (2026-09-03)
 
 
