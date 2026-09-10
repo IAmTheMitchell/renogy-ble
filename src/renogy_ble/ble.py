@@ -914,6 +914,11 @@ class RenogyBleClient:
                 ),
                 _InverterReadSpec(4327, 7, "_parse_inverter_charging_response"),
                 _InverterReadSpec(4408, 6, "_parse_riv4835csh1s_load_response"),
+                _InverterReadSpec(
+                    0xE205,
+                    1,
+                    "_parse_riv4835csh1s_ac_charge_current",
+                ),
             )
 
         return (
@@ -1160,6 +1165,13 @@ class RenogyBleClient:
             "line_charging_current": values[4] * 0.1,
             "load_percentage": values[5],
         }
+
+    @staticmethod
+    def _parse_riv4835csh1s_ac_charge_current(data: bytes) -> dict[str, Any]:
+        """Parse RIV4835CSH1S Program 28 maximum AC charging current."""
+        return RenogyBleClient._parse_inverter_setpoint(
+            data, "inverter_ac_charge_current"
+        )
 
     @staticmethod
     def _parse_inverter_load_response(data: bytes) -> dict[str, Any]:

@@ -28,6 +28,7 @@ def test_riv4835csh1s_read_profile() -> None:
         (4109, 1, "_parse_inverter_device_id_response"),
         (4327, 7, "_parse_inverter_charging_response"),
         (4408, 6, "_parse_riv4835csh1s_load_response"),
+        (0xE205, 1, "_parse_riv4835csh1s_ac_charge_current"),
     ]
     assert specs[0].retries == 2
     assert all(spec.register != 4311 for spec in specs)
@@ -106,6 +107,16 @@ def test_riv4835csh1s_load_response() -> None:
     assert parsed["load_percentage"] == 0
 
 
+@pytest.mark.parametrize(("raw", "amps"), [(0, 0.0), (50, 5.0), (100, 10.0)])
+def test_riv4835csh1s_program28_response(raw: int, amps: float) -> None:
+    """Parse hardware-validated Program 28 values from register 0xE205."""
+    parsed = RenogyBleClient._parse_riv4835csh1s_ac_charge_current(
+        _modbus_read_response([raw])
+    )
+
+    assert parsed["inverter_ac_charge_current"] == pytest.approx(amps)
+
+
 def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
     """Read captured RIV frames without probing unsupported registers."""
 
@@ -132,6 +143,7 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
                 4109: _modbus_read_response([32]),
                 4327: bytes.fromhex("20030e003cfe1102690069028a000209e7e8e0"),
                 4408: bytes.fromhex("20030c000200140016000001710000a0f6"),
+                0xE205: _modbus_read_response([100]),
             }
             self._notify_handler(None, responses[register])
 
@@ -171,9 +183,11 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
     assert result.parsed_data["charging_current"] == pytest.approx(-49.5)
     assert result.parsed_data["solar_voltage"] == pytest.approx(61.7)
     assert result.parsed_data["load_current"] == pytest.approx(0.2)
+    assert result.parsed_data["inverter_ac_charge_current"] == pytest.approx(10.0)
     assert [int.from_bytes(request[2:4], "big") for request in dummy_client.writes] == [
         4000,
         4109,
         4327,
         4408,
+        0xE205,
     ]
