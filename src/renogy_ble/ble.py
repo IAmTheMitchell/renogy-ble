@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import Any, Literal, Optional
 
 from bleak.backends.device import BLEDevice
@@ -55,6 +56,8 @@ RIV4835CSH1S_MODEL = "RIV4835CSH1S"
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
+DEVICE_INFO_TIMEOUT_THRESHOLD = 3
+DEVICE_INFO_RETRY_INTERVAL = 3600
 
 # Default transport mode for request/response devices.
 DEFAULT_TRANSPORT_MODE = "per_operation"
@@ -242,6 +245,9 @@ class RenogyBLEDevice:
 
         self.ble_device = ble_device
         self.address = ble_device.address
+        # Optional controller metadata backoff survives transport reconnects.
+        self._device_info_timeout_count = 0
+        self._device_info_retry_at = 0.0
 
         cleaned_name = clean_device_name(ble_device.name)
         # BLEDevice.name is an OS name and is not guaranteed to be the local
@@ -587,6 +593,10 @@ class RenogyBleClient:
             try:
                 await self._ensure_session_ready(device, session)
             except Exception as connection_error:
+                if device.device_type == DEFAULT_DEVICE_TYPE:
+                    # A failed connection breaks the healthy-telemetry streak.
+                    device._device_info_timeout_count = 0
+                    device._device_info_retry_at = 0.0
                 logger.info(
                     "Failed to prepare BLE session for device %s: %s",
                     device.name,
@@ -603,6 +613,8 @@ class RenogyBleClient:
                 )
 
             any_command_succeeded = False
+            device_info_timed_out = False
+            controller_telemetry_succeeded = False
             error: Exception | None = None
 
             try:
@@ -615,6 +627,15 @@ class RenogyBleClient:
                     command_items.sort(key=lambda item: item[1][1] != 12)
 
                 for command_index, (cmd_name, cmd) in enumerate(command_items):
+                    if (
+                        device.device_type == DEFAULT_DEVICE_TYPE
+                        and cmd_name == "device_info"
+                        and monotonic() < device._device_info_retry_at
+                    ):
+                        logger.debug(
+                            "Skipping device_info during cooldown for %s", device.name
+                        )
+                        continue
                     adjusted_cmd = self._adjust_dcc_command_for_model(
                         device, cmd_name, cmd
                     )
@@ -653,6 +674,11 @@ class RenogyBleClient:
                             device_name=device.name,
                         )
                     except asyncio.TimeoutError:
+                        if (
+                            device.device_type == DEFAULT_DEVICE_TYPE
+                            and cmd_name == "device_info"
+                        ):
+                            device_info_timed_out = True
                         # The response stream is desynchronized; a late reply to
                         # this command would be misread as the next command's.
                         if (
@@ -704,6 +730,12 @@ class RenogyBleClient:
                             device.name,
                         )
                         any_command_succeeded = True
+                        if device.device_type == DEFAULT_DEVICE_TYPE:
+                            if cmd_name == "device_info":
+                                device._device_info_timeout_count = 0
+                                device._device_info_retry_at = 0.0
+                            elif cmd_name == "pv":
+                                controller_telemetry_succeeded = True
                     else:
                         logger.info(
                             "Failed to parse %s data from device %s",
@@ -721,6 +753,23 @@ class RenogyBleClient:
                     "Error reading data from device %s: %s", device.name, str(exc)
                 )
                 error = exc
+
+            if device.device_type == DEFAULT_DEVICE_TYPE:
+                if controller_telemetry_succeeded and device_info_timed_out:
+                    device._device_info_timeout_count += 1
+                    if (
+                        device._device_info_timeout_count
+                        >= DEVICE_INFO_TIMEOUT_THRESHOLD
+                    ):
+                        # Retry hourly so temporary faults cannot disable metadata
+                        # permanently.
+                        device._device_info_retry_at = (
+                            monotonic() + DEVICE_INFO_RETRY_INTERVAL
+                        )
+                elif not controller_telemetry_succeeded:
+                    # An unhealthy poll is not evidence of unsupported metadata.
+                    device._device_info_timeout_count = 0
+                    device._device_info_retry_at = 0.0
 
             if error is not None or session.desynchronized:
                 await self._close_session(
