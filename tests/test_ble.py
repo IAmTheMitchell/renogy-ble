@@ -2380,7 +2380,10 @@ def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
 
 
 @pytest.mark.parametrize("transport_mode", ["per_operation", "persistent_session"])
-def test_controller_metadata_cooldown_retries_and_recovers(monkeypatch, transport_mode):
+@pytest.mark.parametrize("pre_failure_timeouts", [2, 3])
+def test_controller_metadata_cooldown_retries_and_recovers(
+    monkeypatch, transport_mode, pre_failure_timeouts
+):
     """Only repeated metadata failures with working telemetry trigger backoff."""
     telemetry_fails = False
 
@@ -2430,9 +2433,12 @@ def test_controller_metadata_cooldown_retries_and_recovers(monkeypatch, transpor
 
     now = 100.0
     metadata_fails = True
+    connection_fails = False
     clients = []
 
     async def establish(*_args, **_kwargs):
+        if connection_fails:
+            raise BleakError("Connection failed")
         connection = DummyClient(device_info_times_out=metadata_fails)
         clients.append(connection)
         return connection
@@ -2451,13 +2457,25 @@ def test_controller_metadata_cooldown_retries_and_recovers(monkeypatch, transpor
         return result, after - before
 
     async def run():
-        nonlocal now, metadata_fails, telemetry_fails
+        nonlocal now, metadata_fails, telemetry_fails, connection_fails
         # General communication failures must not accumulate metadata backoff.
         telemetry_fails = True
         for _ in range(4):
             _, attempts = await poll()
             assert attempts == 1
         telemetry_fails = False
+        # A connection failure resets both a partial streak and active cooldown.
+        for _ in range(pre_failure_timeouts):
+            result, attempts = await poll()
+            assert result.success and attempts == 1
+        await client.close()
+        connection_fails = True
+        result, attempts = await poll()
+        assert not result.success and isinstance(result.error, BleakError)
+        assert attempts == 0
+        assert device._device_info_timeout_count == 0
+        assert device._device_info_retry_at == 0.0
+        connection_fails = False
         for _ in range(3):
             result, attempts = await poll()
             assert result.success and result.parsed_data["battery_voltage"] == 12.8

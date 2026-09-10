@@ -593,6 +593,10 @@ class RenogyBleClient:
             try:
                 await self._ensure_session_ready(device, session)
             except Exception as connection_error:
+                if device.device_type == DEFAULT_DEVICE_TYPE:
+                    # A failed connection breaks the healthy-telemetry streak.
+                    device._device_info_timeout_count = 0
+                    device._device_info_retry_at = 0.0
                 logger.info(
                     "Failed to prepare BLE session for device %s: %s",
                     device.name,
