@@ -1809,7 +1809,7 @@ def test_controller_reconnects_and_continues_after_device_info_timeout(
     assert "model" not in result.parsed_data
     assert establish_calls == 2
     assert clients[0].requested_registers == [12]
-    assert clients[1].requested_registers == [26, 57348, 256]
+    assert clients[1].requested_registers == [26, 57348, 256, 57347, 57373]
     assert clients[0].disconnect_calls == 1
     assert clients[1].disconnect_calls == 1
 
@@ -2512,3 +2512,15 @@ def test_controller_metadata_cooldown_retries_and_recovers(
         await client.close()
 
     asyncio.run(run())
+
+
+def test_controller_commands_read_the_parameter_block_last():
+    """The Rover parameter reads come after the telemetry reads, so a firmware that
+    does not answer them cannot cost the poll its measurements."""
+    from renogy_ble.ble import COMMANDS, DEFAULT_DEVICE_TYPE
+
+    names = list(COMMANDS[DEFAULT_DEVICE_TYPE])
+    assert names[:4] == ["device_info", "device_id", "battery", "pv"]
+    assert names[4:] == ["parameters", "load_mode"]
+    assert COMMANDS[DEFAULT_DEVICE_TYPE]["parameters"] == (3, 57347, 18)
+    assert COMMANDS[DEFAULT_DEVICE_TYPE]["load_mode"] == (3, 57373, 1)

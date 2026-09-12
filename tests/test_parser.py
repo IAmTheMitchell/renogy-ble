@@ -288,6 +288,12 @@ def integration_test_data():
             b"\x00\x00\x00\x00\x00\x01\x01\x90\x00\x00\x00\x00\x00\x04\x00\x00\xa3\xd2"
         ),
         57348: b"\xff\x03\x02\x00\x04\x90S",
+        # Parameter block 0xE003-0xE014 and load mode 0xE01D, captured from an
+        # RNG-CTRL-RVR (Rover 40 A) through a BT-1 on 2026-09-12, battery type sealed.
+        57347: bytes.fromhex(
+            "ff0324ff00000200a0009b00920090008a0084007e0078006f006a6432000500780078001e00036b80"
+        ),
+        57373: bytes.fromhex("ff03020011519c"),
     }
 
 
@@ -375,6 +381,58 @@ def test_controller_parsing_register_57348(integration_parser, integration_test_
     assert isinstance(result, dict)
     assert "battery_type" in result
     assert result["battery_type"] == "lithium"
+
+
+def test_controller_parsing_register_57347(integration_parser, integration_test_data):
+    """Test parsing the real charging-parameter block (register 57347) of a Rover."""
+    parser, _ = integration_parser
+    result = parser.parse(integration_test_data[57347], "controller", 57347)
+
+    assert result["system_voltage"] == 255  # 0xFF: auto-detect
+    assert result["overvoltage_threshold"] == pytest.approx(16.0)
+    assert result["charging_limit_voltage"] == pytest.approx(15.5)
+    assert result["equalization_voltage"] == pytest.approx(14.6)
+    assert result["boost_voltage"] == pytest.approx(14.4)
+    assert result["float_voltage"] == pytest.approx(13.8)
+    assert result["boost_return_voltage"] == pytest.approx(13.2)
+    assert result["overdischarge_return_voltage"] == pytest.approx(12.6)
+    assert result["undervoltage_warning"] == pytest.approx(12.0)
+    assert result["overdischarge_voltage"] == pytest.approx(11.1)
+    assert result["discharge_limit_voltage"] == pytest.approx(10.6)
+    assert result["end_of_charge_soc"] == 100
+    assert result["end_of_discharge_soc"] == 50
+    assert result["overdischarge_delay"] == 5
+    assert result["equalization_time"] == 120
+    assert result["boost_time"] == 120
+    assert result["equalization_interval"] == 30
+    assert result["temperature_compensation"] == 3
+    # The block also carries the battery type, but that key stays owned by the
+    # dedicated register 57348 read, so it must not be produced twice.
+    # word 1 of the block is the battery type; the parser's range coverage decodes
+    # it here too, and it must agree with the dedicated register 57348 read
+    assert result["battery_type"] == "sealed"
+
+
+def test_controller_parsing_register_57373(integration_parser, integration_test_data):
+    """Test parsing the real load working mode (register 57373) of a Rover."""
+    parser, _ = integration_parser
+    result = parser.parse(integration_test_data[57373], "controller", 57373)
+
+    assert result == {"load_working_mode": "always_on"}
+
+
+def test_controller_load_working_mode_map_covers_every_documented_value():
+    """Modes 0-17 from the Rover manual all decode to a name, never a bare number."""
+    from renogy_ble.register_map import REGISTER_MAP
+
+    mapping = REGISTER_MAP["controller"]["load_working_mode"]["map"]
+    assert mapping[0] == "dusk_to_dawn"
+    assert mapping[1] == "on_1_hour"
+    assert mapping[14] == "on_14_hours"
+    assert mapping[15] == "manual"
+    assert mapping[16] == "test"
+    assert mapping[17] == "always_on"
+    assert set(mapping) == set(range(18))
 
 
 def test_partial_data_parsing(integration_parser):

@@ -194,6 +194,147 @@ REGISTER_MAP: RegisterMap = {
             "map": {1: "open", 2: "sealed", 3: "gel", 4: "lithium", 5: "custom"},
             "offset": 3,
         },
+        # Charging parameter block (register 57347 / 0xE003, 18 words). Offsets are
+        # positions inside that one response. Voltages are in 0.1 V, times in minutes,
+        # the interval in days. Word 1 is the battery type: the range coverage in
+        # the parser decodes it from this block through the 57348 entry above.
+        "system_voltage": {
+            "register": 57347,
+            "length": 1,
+            "byte_order": "big",
+            "offset": 3,
+        },
+        "overvoltage_threshold": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 7,
+        },
+        "charging_limit_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 9,
+        },
+        "equalization_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 11,
+        },
+        "boost_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 13,
+        },
+        "float_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 15,
+        },
+        "boost_return_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 17,
+        },
+        "overdischarge_return_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 19,
+        },
+        "undervoltage_warning": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 21,
+        },
+        "overdischarge_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 23,
+        },
+        "discharge_limit_voltage": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 25,
+        },
+        "end_of_charge_soc": {
+            "register": 57347,
+            "length": 1,
+            "byte_order": "big",
+            "offset": 27,
+        },
+        "end_of_discharge_soc": {
+            "register": 57347,
+            "length": 1,
+            "byte_order": "big",
+            "offset": 28,
+        },
+        "overdischarge_delay": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 29,
+        },
+        "equalization_time": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 31,
+        },
+        "boost_time": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 33,
+        },
+        "equalization_interval": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 35,
+        },
+        "temperature_compensation": {
+            "register": 57347,
+            "length": 2,
+            "byte_order": "big",
+            "offset": 37,
+        },
+        # Load terminal working mode (register 57373 / 0xE01D), per the Rover manual:
+        # 0 dusk-to-dawn, 1-14 on for that many hours after dusk, 15 manual, 16 test,
+        # 17 always on.
+        "load_working_mode": {
+            "register": 57373,
+            "length": 2,
+            "byte_order": "big",
+            "map": {
+                0: "dusk_to_dawn",
+                **{
+                    n: f"on_{n}_hour" if n == 1 else f"on_{n}_hours"
+                    for n in range(1, 15)
+                },
+                15: "manual",
+                16: "test",
+                17: "always_on",
+            },
+            "offset": 3,
+        },
     },
     # DCC (DC-DC Charger) device type
     # Based on DCC Charger Controller Modbus Protocol V1.0
