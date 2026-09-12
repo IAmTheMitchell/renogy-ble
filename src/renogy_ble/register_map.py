@@ -129,6 +129,37 @@ REGISTER_MAP: RegisterMap = {
             "offset": 19,
         },
         "pv_power": {"register": 256, "length": 2, "byte_order": "big", "offset": 21},
+        # The day's extremes (0x010B-0x010E), reset by the controller at midnight.
+        # These are what the controller itself saw, not what a 60 s poll happened
+        # to catch, so they are the record to trust for "how hard did it charge".
+        "daily_min_battery_voltage": {
+            "register": 256,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 25,
+        },
+        "daily_max_battery_voltage": {
+            "register": 256,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.1,
+            "offset": 27,
+        },
+        "max_charging_current_today": {
+            "register": 256,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.01,
+            "offset": 29,
+        },
+        "max_discharging_current_today": {
+            "register": 256,
+            "length": 2,
+            "byte_order": "big",
+            "scale": 0.01,
+            "offset": 31,
+        },
         "max_charging_power_today": {
             "register": 256,
             "length": 2,

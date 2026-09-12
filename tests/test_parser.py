@@ -359,6 +359,20 @@ def test_controller_parsing_register_256(integration_parser, integration_test_da
     assert len(result) >= 18  # This should match the number of fields in register 256
 
 
+def test_controller_parsing_daily_extremes(integration_parser, integration_test_data):
+    """The day's battery-voltage and current extremes at 0x010B-0x010E."""
+    parser, _ = integration_parser
+    result = parser.parse(integration_test_data[256], "controller", 256)
+
+    assert result["daily_min_battery_voltage"] == pytest.approx(14.3)
+    assert result["daily_max_battery_voltage"] == pytest.approx(14.5)
+    # currents are in hundredths of an amp
+    assert result["max_charging_current_today"] == pytest.approx(0.17)
+    assert result["max_discharging_current_today"] == 0
+    # and they sit right before the already-mapped 0x010F power maximum
+    assert result["max_charging_power_today"] == 1
+
+
 def test_controller_negative_temperatures(integration_parser, integration_test_data):
     """Ensure temperature bytes are parsed as signed values."""
     parser, _ = integration_parser
