@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.7.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.7.0...v2.7.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* infer tenth-volt cell scale for legacy BT-TH batteries ([#167](https://github.com/IAmTheMitchell/renogy-ble/issues/167)) ([be34fa5](https://github.com/IAmTheMitchell/renogy-ble/commit/be34fa5da61a5b2ed5c4e4490d6b492e9625f7e4))
+
 ## [2.7.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.6.1...v2.7.0) (2026-09-10)
 
 
