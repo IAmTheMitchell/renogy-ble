@@ -253,16 +253,19 @@ def parse_battery_cell_status(
         int.from_bytes(data[start : start + 2], byteorder="big")
         for start in range(5, 5 + min(cell_count, 16) * 2, 2)
     ]
+    positive_values = [value for value in raw_cell_values if value > 0]
     cell_divisor = cell_voltage_divisor or battery_cell_voltage_divisor(
         None, variant=variant
     )
-    if cell_divisor is None:
-        # Manufacturer-only discovery does not identify whether a Pro pack is
-        # RNGRBP (0.1 V units) or RNGC (millivolts). A positive raw value below
-        # 100 would be under 0.1 V with millivolt encoding, so infer only that
-        # unambiguous case and preserve the millivolt default otherwise.
-        positive_values = [value for value in raw_cell_values if value > 0]
-        cell_divisor = 10 if positive_values and max(positive_values) < 100 else 1000
+    if positive_values and max(positive_values) < 100 and cell_divisor in (None, 1000):
+        # Some legacy packs (including RBT12400LFPLSHBT behind BT-TH-* BLE names)
+        # report cell voltage in 0.1 V units even though the legacy family default
+        # is millivolts. Values below 100 cannot represent a valid LiFePO4 cell in
+        # millivolt encoding, so this is an unambiguous tenth-volt scale signal.
+        # The same inference also preserves manufacturer-only Pro discovery.
+        cell_divisor = 10
+    elif cell_divisor is None:
+        cell_divisor = 1000
     cell_values = [value / cell_divisor for value in raw_cell_values]
     if cell_values:
         parsed["cell_voltages"] = cell_values
