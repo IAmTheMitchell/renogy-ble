@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## [2.8.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.7.0...v2.8.0) (2026-09-15)
+
+
+### Features
+
+* read the charge controller's charging parameters and load mode ([#169](https://github.com/IAmTheMitchell/renogy-ble/issues/169)) ([e6e53e1](https://github.com/IAmTheMitchell/renogy-ble/commit/e6e53e1797917cd24df18b144ee181f230ba4c77))
+
+
+### Bug Fixes
+
+* infer tenth-volt cell scale for legacy BT-TH batteries ([#167](https://github.com/IAmTheMitchell/renogy-ble/issues/167)) ([be34fa5](https://github.com/IAmTheMitchell/renogy-ble/commit/be34fa5da61a5b2ed5c4e4490d6b492e9625f7e4))
+
 ## [2.7.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.6.1...v2.7.0) (2026-09-10)
 
 
