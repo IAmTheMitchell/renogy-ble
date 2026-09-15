@@ -226,9 +226,10 @@ REGISTER_MAP: RegisterMap = {
             "offset": 3,
         },
         # Charging parameter block (register 57347 / 0xE003, 18 words). Offsets are
-        # positions inside that one response. Voltages are in 0.1 V, times in minutes,
-        # the interval in days. Word 1 is the battery type: the range coverage in
-        # the parser decodes it from this block through the 57348 entry above.
+        # positions inside that one response. Voltages are in 0.1 V, the overdischarge
+        # delay in seconds, charging durations in minutes, and the interval in days.
+        # Word 1 is the battery type: range coverage in the parser decodes it from
+        # this block through the 57348 entry above.
         "system_voltage": {
             "register": 57347,
             "length": 1,

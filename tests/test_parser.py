@@ -366,10 +366,10 @@ def test_controller_parsing_daily_extremes(integration_parser, integration_test_
 
     assert result["daily_min_battery_voltage"] == pytest.approx(14.3)
     assert result["daily_max_battery_voltage"] == pytest.approx(14.5)
-    # currents are in hundredths of an amp
+    # Currents are in hundredths of an amp.
     assert result["max_charging_current_today"] == pytest.approx(0.17)
     assert result["max_discharging_current_today"] == 0
-    # and they sit right before the already-mapped 0x010F power maximum
+    # They sit right before the already-mapped 0x010F power maximum.
     assert result["max_charging_power_today"] == 1
 
 
@@ -420,10 +420,7 @@ def test_controller_parsing_register_57347(integration_parser, integration_test_
     assert result["boost_time"] == 120
     assert result["equalization_interval"] == 30
     assert result["temperature_compensation"] == 3
-    # The block also carries the battery type, but that key stays owned by the
-    # dedicated register 57348 read, so it must not be produced twice.
-    # word 1 of the block is the battery type; the parser's range coverage decodes
-    # it here too, and it must agree with the dedicated register 57348 read
+    # Range coverage also decodes the battery type from word 1 of this block.
     assert result["battery_type"] == "sealed"
 
 
