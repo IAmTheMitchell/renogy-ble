@@ -89,6 +89,15 @@ COMMANDS = {
         "device_id": (3, 26, 1),
         "battery": (3, 57348, 1),
         "pv": (3, 256, 34),
+        # Charging parameters, the same 0xE003-0xE014 block the DCC reads: the
+        # equalization/boost/float voltages, the low-voltage thresholds and the
+        # equalization/boost durations and interval. Verified against an RNG-CTRL-RVR
+        # through a BT-1 (2026-09-12). Ordered after the telemetry so a firmware that
+        # does not answer cannot cost the poll its measurements.
+        "parameters": (3, 57347, 18),  # 0xE003-0xE014 (18 words)
+        # Load terminal working mode (0xE01D): dusk-to-dawn, timed, manual, test,
+        # always on.
+        "load_mode": (3, 57373, 1),
     },
     "dcc": {
         "device_info": (3, 12, 8),

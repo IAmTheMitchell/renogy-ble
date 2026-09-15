@@ -1809,7 +1809,7 @@ def test_controller_reconnects_and_continues_after_device_info_timeout(
     assert "model" not in result.parsed_data
     assert establish_calls == 2
     assert clients[0].requested_registers == [12]
-    assert clients[1].requested_registers == [26, 57348, 256]
+    assert clients[1].requested_registers == [26, 57348, 256, 57347, 57373]
     assert clients[0].disconnect_calls == 1
     assert clients[1].disconnect_calls == 1
 
@@ -2512,3 +2512,102 @@ def test_controller_metadata_cooldown_retries_and_recovers(
         await client.close()
 
     asyncio.run(run())
+
+
+def test_controller_commands_read_the_parameter_block_last():
+    """The Rover parameter reads come after the telemetry reads, so a firmware that
+    does not answer them cannot cost the poll its measurements."""
+    from renogy_ble.ble import COMMANDS, DEFAULT_DEVICE_TYPE
+
+    names = list(COMMANDS[DEFAULT_DEVICE_TYPE])
+    assert names[:4] == ["device_info", "device_id", "battery", "pv"]
+    assert names[4:] == ["parameters", "load_mode"]
+    assert COMMANDS[DEFAULT_DEVICE_TYPE]["parameters"] == (3, 57347, 18)
+    assert COMMANDS[DEFAULT_DEVICE_TYPE]["load_mode"] == (3, 57373, 1)
+
+
+@pytest.mark.parametrize("transport_mode", ["per_operation", "persistent_session"])
+@pytest.mark.parametrize("optional_response", ["success", "timeout", "exception"])
+def test_controller_optional_reads_preserve_telemetry(
+    monkeypatch, transport_mode, optional_response
+):
+    """New optional reads return captured values or leave earlier telemetry intact."""
+    clients = []
+    frames = {
+        57347: bytes.fromhex(
+            "ff0324ff00000200a0009b00920090008a0084007e0078006f006a6432000500780078001e00036b80"
+        ),
+        57373: bytes.fromhex("ff03020011519c"),
+    }
+
+    class DummyClient:
+        def __init__(self):
+            self.is_connected = True
+            self.requested_registers = []
+            self.notify_handler = None
+
+        async def start_notify(self, _uuid, handler):
+            self.notify_handler = handler
+
+        async def write_gatt_char(self, _uuid, payload):
+            assert self.notify_handler is not None
+            register = int.from_bytes(payload[2:4], "big")
+            self.requested_registers.append(register)
+            if register in frames:
+                if optional_response == "timeout":
+                    return
+                if optional_response == "exception":
+                    frame = bytes([DEFAULT_DEVICE_ID, 0x83, 0x02])
+                    frame += bytes(modbus_crc(frame))
+                else:
+                    frame = frames[register]
+            else:
+                values = [0] * int.from_bytes(payload[4:6], "big")
+                if register == 256:
+                    values[:3] = [75, 128, 250]
+                elif register == 57348:
+                    values = [2]
+                frame = _modbus_read_response(DEFAULT_DEVICE_ID, values)
+            self.notify_handler(None, frame)
+
+        async def stop_notify(self, *_args, **_kwargs):
+            pass
+
+        async def disconnect(self):
+            self.is_connected = False
+
+    async def establish(*_args, **_kwargs):
+        connection = DummyClient()
+        clients.append(connection)
+        return connection
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", establish)
+    client = RenogyBleClient(
+        max_notification_wait_time=0.01, transport_mode=transport_mode
+    )
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="controller")
+
+    async def run():
+        result = await client.read_device(device)
+        await client.close()
+        return result
+
+    result = asyncio.run(run())
+    assert result.success is True
+    assert result.error is None
+    assert result.parsed_data["battery_voltage"] == 12.8
+    assert result.parsed_data["battery_type"] == "sealed"
+    assert [
+        reg for connection in clients for reg in connection.requested_registers
+    ] == [12, 26, 57348, 256, 57347, 57373]
+    if optional_response == "success":
+        assert result.parsed_data["boost_voltage"] == pytest.approx(14.4)
+        assert result.parsed_data["load_working_mode"] == "always_on"
+        assert len(clients) == 1
+    else:
+        assert "boost_voltage" not in result.parsed_data
+        assert "load_working_mode" not in result.parsed_data
+        assert len(clients) == 2
+    assert all(not connection.is_connected for connection in clients)
