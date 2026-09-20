@@ -1,8 +1,9 @@
 """Tests for Smart Shunt payload parsing."""
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from bleak import BleakClient
 
 from renogy_ble import shunt as shunt_module
@@ -18,7 +19,7 @@ from renogy_ble.shunt import (
     KEY_SHUNT_VOLTAGE,
     SHUNT_LIVE_HEADER,
     ShuntBleClient,
-    _find_valid_payload_window,
+    ShuntNotificationDecoder,
     parse_shunt_payload,
 )
 
@@ -95,102 +96,79 @@ def test_parse_shunt_payload_accepts_short_live_frame() -> None:
     assert data["battery_temperature"] is None
 
 
-def test_find_valid_payload_window_recovers_from_misaligned_frame() -> None:
-    """Validate parsing can recover when payload capture starts mid-frame."""
-    valid_payload = _build_payload(voltage=13.2, current=4.3)
-    stream = b"\xaa\xbb\xcc\xdd\xee" + valid_payload
+@pytest.mark.parametrize("split", range(1, 110))
+def test_decoder_reassembles_every_split(split):
+    """All frame/header boundaries, including the reported 55/55 split, work."""
+    payload = _build_payload()
+    decoder = ShuntNotificationDecoder()
+    assert decoder.feed(payload[:split]) == []
+    readings = decoder.feed(payload[split:])
+    assert len(readings) == 1
+    assert readings[0]["shunt_voltage"] == 13.2
+    assert readings[0]["shunt_current"] == -5.4
+    assert readings[0]["shunt_soc"] == 85.4
+    assert readings[0]["raw_payload"] == payload.hex()
+    assert readings[0]["raw_words"] == [
+        int.from_bytes(payload[i : i + 2], "big") for i in range(0, 110, 2)
+    ]
+    assert decoder.feed(b"") == []
 
-    result = _find_valid_payload_window(stream, expected_length=110)
 
-    assert result is not None
-    raw_payload, parsed = result
-    assert raw_payload == valid_payload
-    assert parsed[KEY_SHUNT_VOLTAGE] == 13.2
-    assert parsed[KEY_SHUNT_CURRENT] == 4.3
-
-
-def test_find_valid_payload_window_prefers_live_frame_over_history_frame() -> None:
-    """Validate history frames are skipped until a live payload is found."""
-    history_payload = _build_payload(
-        voltage=13.4, current=1.1, header=bytes.fromhex("4257010b")
+def test_decoder_resynchronizes_and_returns_all_frames():
+    """Noise, history, implausible live data and framing do not hide good data."""
+    first = _build_payload(current=2)
+    second = _build_payload(current=-3)
+    stream = (
+        b"noise"
+        + _build_payload(header=bytes.fromhex("4257010b"))
+        + _build_payload(voltage=150)
+        + bytes.fromhex("61d20000")
+        + first
+        + second
+        + first[:27]
     )
-    live_payload = _build_payload(voltage=14.2, current=5.6)
-
-    result = _find_valid_payload_window(
-        history_payload + b"\xaa\xbb" + live_payload, expected_length=110
-    )
-
-    assert result is not None
-    raw_payload, parsed = result
-    assert raw_payload == live_payload
-    assert parsed[KEY_SHUNT_VOLTAGE] == 14.2
-    assert parsed[KEY_SHUNT_CURRENT] == 5.6
+    decoder = ShuntNotificationDecoder()
+    readings = decoder.feed(stream)
+    assert [r["shunt_current"] for r in readings] == [2, -3]
+    assert decoder.feed(first[27:])[0]["shunt_current"] == 2
 
 
-def test_find_valid_payload_window_strips_framed_live_packet() -> None:
-    """Validate the parser strips the observed 61d2 framing prefix."""
-    live_payload = _build_payload(voltage=13.9, current=2.4)
-    framed_payload = bytes.fromhex("61d20000") + live_payload
-
-    result = _find_valid_payload_window(framed_payload, expected_length=110)
-
-    assert result is not None
-    raw_payload, parsed = result
-    assert raw_payload == live_payload
-    assert parsed[KEY_SHUNT_VOLTAGE] == 13.9
-    assert parsed[KEY_SHUNT_CURRENT] == 2.4
+def test_decoder_rejects_history_and_bounds_retained_noise():
+    """Arbitrary invalid input cannot grow the retained stream indefinitely."""
+    decoder = ShuntNotificationDecoder()
+    assert decoder.feed(b"x" * 100000) == []
+    assert len(decoder._buffer) < 110
+    assert decoder.feed(_build_payload(header=bytes.fromhex("4257010b"))) == []
+    assert decoder.feed(_build_payload())[0]["reading_verified"] is True
 
 
-def test_find_valid_payload_window_supports_shorter_expected_length() -> None:
-    """Validate the configurable expected length still works for shorter live frames."""
-    live_payload = _build_payload(voltage=12.6, current=-1.8, length=28)
-
-    result = _find_valid_payload_window(live_payload, expected_length=28)
-
-    assert result is not None
-    raw_payload, parsed = result
-    assert raw_payload == live_payload
-    assert parsed[KEY_SHUNT_VOLTAGE] == 12.6
-    assert parsed[KEY_SHUNT_CURRENT] == -1.8
-
-
-def test_energy_integration_tracks_totals_for_each_device_separately() -> None:
-    """Validate energy totals are isolated per device address."""
-    client = ShuntBleClient()
-
-    assert client._integrate_energy_totals(
-        device_address="A", power_w=100.0, now_ts=1000.0
-    ) == (0, 0)
-    assert client._integrate_energy_totals(
-        device_address="B", power_w=200.0, now_ts=1100.0
-    ) == (0, 0)
-
-    a_charged, a_discharged = client._integrate_energy_totals(
-        device_address="A", power_w=100.0, now_ts=4600.0
-    )
-    b_charged, b_discharged = client._integrate_energy_totals(
-        device_address="B", power_w=-200.0, now_ts=2900.0
-    )
-
-    assert round(a_charged, 3) == 0.1
-    assert round(a_discharged, 3) == 0
-    assert round(b_charged, 3) == 0
-    assert round(b_discharged, 3) == 0.1
+def test_decoder_reset_discards_partial_frame_and_retains_energy():
+    """Reconnections cannot join old fragments but do retain device totals."""
+    ticks = iter([1000, 4600, 8200])
+    decoder = ShuntNotificationDecoder(clock=lambda: next(ticks))
+    payload = _build_payload(voltage=10, current=10)
+    assert decoder.feed(payload)[0]["energy_charged_total"] == 0
+    assert decoder.feed(payload)[0]["energy_charged_total"] == 0.1
+    assert decoder.feed(payload[:55]) == []
+    decoder.reset_buffer()
+    assert decoder.feed(payload[55:]) == []
+    assert decoder.feed(payload)[0]["energy_charged_total"] == 0.2
 
 
-def test_energy_integration_ignores_invalid_time_delta() -> None:
-    """Validate energy totals do not accumulate for stale or non-positive deltas."""
-    client = ShuntBleClient()
+def test_decoder_ignores_invalid_time_delta():
+    """Non-positive deltas and gaps of ten hours or more add no energy."""
+    ticks = iter([1000, 900, 50000])
+    decoder = ShuntNotificationDecoder(clock=lambda: next(ticks))
+    for _ in range(3):
+        assert decoder.feed(_build_payload())[0]["energy_discharged_total"] == 0
 
-    assert client._integrate_energy_totals(
-        device_address="A", power_w=50.0, now_ts=1000.0
-    ) == (0, 0)
-    assert client._integrate_energy_totals(
-        device_address="A", power_w=50.0, now_ts=900.0
-    ) == (0, 0)
-    assert client._integrate_energy_totals(
-        device_address="A", power_w=50.0, now_ts=50000.0
-    ) == (0, 0)
+
+def test_decoder_supports_configurable_frame_length():
+    """The explicit shorter-frame override remains supported."""
+    decoder = ShuntNotificationDecoder(expected_length=28)
+    assert decoder.feed(_build_payload(length=28))[0]["shunt_voltage"] == 13.2
+    with pytest.raises(ValueError):
+        ShuntNotificationDecoder(expected_length=27)
 
 
 def _mock_ble_device(name: str = "RTMShunt300A", address: str = "AA:BB:CC:DD:EE:FF"):
@@ -228,7 +206,8 @@ def test_read_device_preserves_stale_data_on_connection_failure(monkeypatch) -> 
     assert isinstance(result.error, asyncio.TimeoutError)
     assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
     assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
-    assert connection_client_class is BleakClient
+    assert isinstance(connection_client_class, type)
+    assert issubclass(connection_client_class, BleakClient)
     assert connection_kwargs is not None
     assert connection_kwargs["use_services_cache"] is False
 
@@ -311,3 +290,636 @@ def test_read_device_preserves_last_good_data_on_history_only_payload(
     assert isinstance(result.error, RuntimeError)
     assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "last-good"}
     assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "last-good"}
+
+
+class _Transport:
+    """Transport fake that still exercises the real decoder and session."""
+
+    def __init__(self, chunks=(), *, notify_error=None):
+        self.is_connected = True
+        self.chunks = chunks
+        self.notify_error = notify_error
+        self.started = asyncio.Event()
+        self.handler = None
+        self.stop_notify = AsyncMock()
+        self.disconnect = AsyncMock(side_effect=self._disconnect)
+
+    def _disconnect(self):
+        self.is_connected = False
+
+    async def start_notify(self, _uuid, handler):
+        self.handler = handler
+        for chunk in self.chunks:
+            handler(1, bytearray(chunk))
+        self.started.set()
+        if self.notify_error:
+            raise self.notify_error
+
+
+def _device(address="A"):
+    return RenogyBLEDevice(_mock_ble_device(address=address), device_type="SHUNT300")
+
+
+def test_read_and_subscription_share_fragmented_decoding(monkeypatch):
+    """Both real entry points normalize the reported fragmented payload equally."""
+
+    async def scenario():
+        payload = _build_payload()
+        transports = [_Transport((payload[:55], payload[55:])) for _ in range(2)]
+        monkeypatch.setattr(
+            shunt_module, "establish_connection", AsyncMock(side_effect=transports)
+        )
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        owner = ShuntBleClient()
+        result = await owner.read_device(_device())
+        assert result.success
+        updates, errors = [], []
+        sub = owner.subscribe(
+            resolve_device=_device, on_update=updates.append, on_error=errors.append
+        )
+        task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(transports[1].started.wait(), 1)
+        await sub.close()
+        await sub.close()
+        assert task.cancelled()
+        assert updates == [result.parsed_data]
+        assert errors == []
+        for transport in transports:
+            transport.stop_notify.assert_awaited_once()
+            transport.disconnect.assert_awaited_once()
+        with pytest.raises(RuntimeError):
+            await sub.run()
+
+    asyncio.run(scenario())
+
+
+def test_energy_isolated_per_device_across_reads(monkeypatch):
+    """One public client retains independent energy counters between read sessions."""
+
+    async def scenario():
+        ticks = iter([1000, 1100, 4600, 2900])
+        # Resolve the clock at construction without changing asyncio's own clock.
+        real_decoder = ShuntNotificationDecoder
+        monkeypatch.setattr(
+            shunt_module,
+            "ShuntNotificationDecoder",
+            lambda **kwargs: real_decoder(clock=lambda: next(ticks), **kwargs),
+        )
+        transports = [
+            _Transport((_build_payload(voltage=10, current=current),))
+            for current in (10, 20, 10, -20)
+        ]
+        monkeypatch.setattr(
+            shunt_module, "establish_connection", AsyncMock(side_effect=transports)
+        )
+        owner = ShuntBleClient()
+        for address in ("A", "B"):
+            result = await owner.read_device(_device(address))
+            assert result.parsed_data["energy_charged_total"] == 0
+        a = await owner.read_device(_device("A"))
+        b = await owner.read_device(_device("B"))
+        assert a.parsed_data["energy_charged_total"] == 0.1
+        assert a.parsed_data["energy_discharged_total"] == 0
+        assert b.parsed_data["energy_charged_total"] == 0
+        assert b.parsed_data["energy_discharged_total"] == 0.1
+
+    asyncio.run(scenario())
+
+
+def test_subscription_reconnect_resets_buffer_and_ignores_old_callbacks(monkeypatch):
+    """A new connection cannot finish a partial frame from the disconnected one."""
+
+    async def scenario():
+        payload = _build_payload()
+        first, second = _Transport((payload[:55],)), _Transport((payload[55:],))
+        connections = []
+
+        async def connect(*_args, **kwargs):
+            connections.append(kwargs)
+            return (first, second)[len(connections) - 1]
+
+        monkeypatch.setattr(shunt_module, "establish_connection", connect)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        updates, errors = [], []
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device,
+            on_update=updates.append,
+            on_error=errors.append,
+            reconnect_delay=0,
+        )
+        task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(first.started.wait(), 1)
+        first.is_connected = False
+        connections[0]["disconnected_callback"](first)
+        await asyncio.wait_for(second.started.wait(), 1)
+        assert updates == []
+        assert first.handler is not None
+        first.handler(1, bytearray(payload))
+        assert updates == []
+        assert second.handler is not None
+        second.handler(1, bytearray(payload + payload))
+        assert len(updates) == 2
+        assert len(errors) == 1
+        assert "disconnected" in str(errors[0])
+        await sub.close()
+        assert task.done()
+        first.disconnect.assert_awaited_once()
+        second.disconnect.assert_awaited_once()
+        assert all(c["use_services_cache"] is False for c in connections)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_result", [True, False, RuntimeError("no BlueZ")])
+def test_subscription_cache_recovery(monkeypatch, cache_result):
+    """Successful cache clears use a fresh handle; other backends still connect."""
+
+    async def scenario():
+        device = _device()
+        original = device.ble_device
+        fresh = _mock_ble_device(address="A")
+        transport = _Transport()
+        rediscover = MagicMock(return_value=fresh)
+        cache = (
+            AsyncMock(side_effect=cache_result)
+            if isinstance(cache_result, Exception)
+            else AsyncMock(return_value=cache_result)
+        )
+        connection = AsyncMock(return_value=transport)
+        monkeypatch.setattr(shunt_module, "clear_cache", cache)
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        sub = ShuntBleClient().subscribe(
+            resolve_device=lambda: device,
+            rediscover_device=rediscover,
+            on_update=MagicMock(),
+            on_error=MagicMock(),
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        await sub.close()
+        cache.assert_awaited_once_with("A")
+        assert connection.call_args.args[1] is (
+            fresh if cache_result is True else original
+        )
+        assert rediscover.call_count == (1 if cache_result is True else 0)
+
+    asyncio.run(scenario())
+
+
+def test_subscription_defers_missing_device_and_rediscovery(monkeypatch):
+    """Missing discovery/cooldown and missing refreshed handles cause no connect."""
+
+    async def scenario():
+        connection = AsyncMock()
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=True))
+        resolved = asyncio.Event()
+
+        def resolve():
+            resolved.set()
+            return None
+
+        sub = ShuntBleClient().subscribe(
+            resolve_device=resolve, on_update=MagicMock(), on_error=MagicMock()
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(resolved.wait(), 1)
+        await sub.close()
+        resolved.clear()
+
+        def rediscover(_address):
+            resolved.set()
+            return None
+
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device,
+            rediscover_device=rediscover,
+            on_update=MagicMock(),
+            on_error=MagicMock(),
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(resolved.wait(), 1)
+        await sub.close()
+        connection.assert_not_awaited()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["connect", "notify", "callback"])
+def test_subscription_reports_errors_and_recovers(monkeypatch, failure):
+    """Transport and consumer errors are visible, and the subscription can recover."""
+
+    async def scenario():
+        error = RuntimeError(failure)
+        first = _Transport(notify_error=error if failure == "notify" else None)
+        good = _Transport((_build_payload(), _build_payload()))
+        connect = AsyncMock(
+            side_effect=[error, good]
+            if failure == "connect"
+            else [first, good]
+            if failure == "notify"
+            else [good]
+        )
+        monkeypatch.setattr(shunt_module, "establish_connection", connect)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        updates, errors = [], []
+
+        def update(reading):
+            if failure == "callback" and not errors:
+                raise error
+            updates.append(reading)
+
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device,
+            on_update=update,
+            on_error=errors.append,
+            reconnect_delay=0,
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(good.started.wait(), 1)
+        await sub.close()
+        assert errors == [error]
+        assert len(updates) == (1 if failure == "callback" else 2)
+        good.disconnect.assert_awaited_once()
+        if failure == "notify":
+            first.disconnect.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("phase", ["connect", "notify", "listening", "backoff"])
+def test_subscription_cancellation_cleans_up(monkeypatch, phase):
+    """Cancellation at each await propagates and releases any acquired transport."""
+
+    async def scenario():
+        entered = asyncio.Event()
+        transport = _Transport()
+        never = asyncio.Event()
+
+        async def connect(*_args, **_kwargs):
+            if phase == "connect":
+                entered.set()
+                await never.wait()
+            if phase == "backoff":
+                entered.set()
+                raise RuntimeError("connect failed")
+            return transport
+
+        if phase == "notify":
+
+            async def notify(*_args):
+                entered.set()
+                await never.wait()
+
+            transport.start_notify = AsyncMock(side_effect=notify)
+        elif phase == "listening":
+            entered = transport.started
+        monkeypatch.setattr(shunt_module, "establish_connection", connect)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=MagicMock()
+        )
+        task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        await asyncio.wait_for(sub.close(), 1)
+        assert task.cancelled()
+        assert transport.disconnect.await_count == (
+            1 if phase in ("notify", "listening") else 0
+        )
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_is_bounded_and_reports_failure(monkeypatch):
+    """Hanging stop_notify still attempts disconnect, and shutdown is bounded."""
+
+    async def scenario():
+        transport = _Transport()
+
+        async def hang(*_args):
+            await asyncio.Event().wait()
+
+        transport.stop_notify = AsyncMock(side_effect=hang)
+        transport.disconnect = AsyncMock(side_effect=hang)
+        monkeypatch.setattr(
+            shunt_module, "establish_connection", AsyncMock(return_value=transport)
+        )
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        errors = []
+        sub = ShuntBleClient(disconnect_timeout=0.01).subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=errors.append
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        await asyncio.wait_for(sub.close(), 1)
+        transport.stop_notify.assert_awaited_once()
+        transport.disconnect.assert_awaited_once()
+        assert len(errors) == 1
+        assert isinstance(errors[0], TimeoutError)
+
+    asyncio.run(scenario())
+
+
+def test_cancel_intermittent_read_disconnects(monkeypatch):
+    """Intermittent cancellation releases a subscribed transport too."""
+
+    async def scenario():
+        transport = _Transport()
+        monkeypatch.setattr(
+            shunt_module, "establish_connection", AsyncMock(return_value=transport)
+        )
+        task = asyncio.create_task(ShuntBleClient().read_device(_device()))
+        await asyncio.wait_for(transport.started.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        transport.stop_notify.assert_awaited_once()
+        transport.disconnect.assert_awaited_once()
+
+    asyncio.run(scenario())
+
+
+def test_subscription_ignores_disconnect_from_connector_retry(monkeypatch):
+    """A failed internal connect attempt cannot terminate the successful retry."""
+
+    async def scenario():
+        transport = _Transport((_build_payload(),))
+
+        async def connect(*_args, **kwargs):
+            kwargs["disconnected_callback"](transport)
+            return transport
+
+        connection = AsyncMock(side_effect=connect)
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        updates, errors = [], []
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device,
+            on_update=updates.append,
+            on_error=errors.append,
+            reconnect_delay=0,
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        await asyncio.sleep(0)
+        assert len(updates) == 1
+        assert errors == []
+        transport.disconnect.assert_not_awaited()
+        connection.assert_awaited_once()
+        await sub.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_close_preserves_cleanup_and_propagates(monkeypatch):
+    """An application shutdown deadline cancels close without losing disconnect."""
+
+    async def scenario():
+        transport = _Transport()
+        cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event()
+
+        async def stop(*_args):
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+        transport.stop_notify = AsyncMock(side_effect=stop)
+        transport.disconnect = AsyncMock(side_effect=RuntimeError("disconnect failed"))
+        monkeypatch.setattr(
+            shunt_module, "establish_connection", AsyncMock(return_value=transport)
+        )
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        errors = []
+        sub = ShuntBleClient().subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=errors.append
+        )
+        run_task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        close_task = asyncio.create_task(sub.close())
+        await asyncio.wait_for(cleanup_started.wait(), 1)
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+        # A second cancellation of the owned run task also cannot kill cleanup.
+        run_task.cancel()
+        release_cleanup.set()
+        await asyncio.wait_for(sub.close(), 1)
+        transport.disconnect.assert_awaited_once()
+        assert len(errors) == 1
+        assert str(errors[0]) == "disconnect failed"
+
+    asyncio.run(scenario())
+
+
+def test_intermittent_notify_failure_does_not_report_stale_success(monkeypatch):
+    """A notification arriving before start_notify fails is not a successful read."""
+    transport = _Transport(
+        (_build_payload(),), notify_error=RuntimeError("notify failed")
+    )
+    monkeypatch.setattr(
+        shunt_module, "establish_connection", AsyncMock(return_value=transport)
+    )
+    device = _device()
+    device.parsed_data = {"shunt_voltage": 12.5}
+    result = asyncio.run(ShuntBleClient().read_device(device))
+    assert not result.success
+    assert result.parsed_data == {"shunt_voltage": 12.5}
+    assert str(result.error) == "notify failed"
+
+
+@pytest.mark.parametrize("schedule_before_close", [False, True])
+def test_subscription_close_before_start_is_clean(monkeypatch, schedule_before_close):
+    """Immediate shutdown completes a pending first run without opening transport."""
+
+    async def scenario():
+        connection = AsyncMock()
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        resolve, update, error = MagicMock(), MagicMock(), MagicMock()
+        sub = ShuntBleClient().subscribe(
+            resolve_device=resolve, on_update=update, on_error=error
+        )
+        task = asyncio.create_task(sub.run()) if schedule_before_close else None
+        await sub.close()
+        await sub.close()
+        if task is None:
+            task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(task, 1)
+        assert task.done() and not task.cancelled()
+        resolve.assert_not_called()
+        update.assert_not_called()
+        error.assert_not_called()
+        connection.assert_not_awaited()
+        with pytest.raises(RuntimeError):
+            await sub.run()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["read", "subscription"])
+@pytest.mark.parametrize("outcome", ["cancel", "failure"])
+def test_partial_connection_is_released(monkeypatch, mode, outcome):
+    """Service discovery cancellation or failure releases an already open link."""
+    import bleak_retry_connector
+
+    async def scenario():
+        connected, release_discovery, reported = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        clients, errors = [], []
+
+        class PartialClient:
+            def __init__(self, *_args, **_kwargs):
+                self.is_connected = False
+                self.stop_notify = AsyncMock()
+                self.disconnect = AsyncMock(side_effect=self._disconnect)
+                clients.append(self)
+
+            async def connect(self, **_kwargs):
+                self.is_connected = True
+                connected.set()
+                await release_discovery.wait()
+                raise RuntimeError("service discovery failed")
+
+            def _disconnect(self):
+                self.is_connected = False
+
+        def report(error):
+            errors.append(error)
+            reported.set()
+
+        monkeypatch.setattr(shunt_module, "BleakClient", PartialClient)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        # Exercise the real retry connector without accessing the system adapter.
+        monkeypatch.setattr(bleak_retry_connector, "IS_LINUX", False)
+        owner = ShuntBleClient()
+        sub = owner.subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=report
+        )
+        task = asyncio.create_task(
+            owner.read_device(_device()) if mode == "read" else sub.run()
+        )
+        await asyncio.wait_for(connected.wait(), 1)
+        assert clients[0].is_connected
+        if outcome == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            release_discovery.set()
+            if mode == "read":
+                result = await asyncio.wait_for(task, 1)
+                assert not result.success
+                assert str(result.error) == "service discovery failed"
+            else:
+                await asyncio.wait_for(reported.wait(), 1)
+        await sub.close()
+        assert not clients[0].is_connected
+        clients[0].disconnect.assert_awaited_once()
+        clients[0].stop_notify.assert_not_awaited()
+        assert [str(error) for error in errors] == (
+            ["service discovery failed"]
+            if outcome == "failure" and mode == "subscription"
+            else []
+        )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["read", "subscription"])
+def test_connection_cancellation_does_not_wait_for_backend_cleanup(monkeypatch, mode):
+    """A stalled BlueZ disconnect while connect unwinds cannot stall shutdown."""
+    import bleak_retry_connector
+
+    async def scenario():
+        entered, unwinding, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        clients = []
+
+        class SlowCancelClient:
+            def __init__(self, *_args, **_kwargs):
+                self.is_connected = True
+                self.stop_notify = AsyncMock()
+                self.disconnect = AsyncMock(side_effect=self._disconnect)
+                clients.append(self)
+
+            async def connect(self, **_kwargs):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    unwinding.set()
+                    await release.wait()
+
+            def _disconnect(self):
+                self.is_connected = False
+
+        monkeypatch.setattr(shunt_module, "BleakClient", SlowCancelClient)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        monkeypatch.setattr(bleak_retry_connector, "IS_LINUX", False)
+        errors = []
+        owner = ShuntBleClient(disconnect_timeout=0.01)
+        sub = owner.subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=errors.append
+        )
+        task = asyncio.create_task(
+            owner.read_device(_device()) if mode == "read" else sub.run()
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            if mode == "subscription":
+                await asyncio.wait_for(sub.close(), 0.5)
+            else:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 0.5)
+            assert unwinding.is_set()
+            assert task.cancelled()
+            clients[0].disconnect.assert_awaited_once()
+            clients[0].stop_notify.assert_not_awaited()
+            assert not clients[0].is_connected
+            assert errors == []
+        finally:
+            release.set()
+            await sub.close()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("miss_first_scan", [False, True])
+def test_subscription_rediscovery_retains_adapter_and_retries(
+    monkeypatch, miss_first_scan
+):
+    """Invalidated handles stay deferred until rediscovered on their own adapter."""
+
+    async def scenario():
+        device = _device()
+        device.ble_device.details = {"path": "/org/bluez/hci1/dev_AA_BB_CC_DD_EE_FF"}
+        fresh = _mock_ble_device(address=device.address)
+        transport = _Transport()
+        scanner = AsyncMock(side_effect=[None, fresh] if miss_first_scan else [fresh])
+        cache = AsyncMock(side_effect=[True, False] if miss_first_scan else [True])
+        connection = AsyncMock(return_value=transport)
+        monkeypatch.setattr(shunt_module, "clear_cache", cache)
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        monkeypatch.setattr(
+            shunt_module.BleakScanner, "find_device_by_address", scanner
+        )
+        sub = ShuntBleClient().subscribe(
+            resolve_device=lambda: device,
+            on_update=MagicMock(),
+            on_error=MagicMock(),
+            reconnect_delay=0,
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        await sub.close()
+        assert scanner.await_count == (2 if miss_first_scan else 1)
+        for scan in scanner.call_args_list:
+            assert scan.args == (device.address,)
+            assert scan.kwargs == {"adapter": "hci1"}
+        connection.assert_awaited_once()
+        assert connection.call_args.args[1] is fresh
+
+    asyncio.run(scenario())
