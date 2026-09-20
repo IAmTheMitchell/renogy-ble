@@ -171,13 +171,67 @@ class ShuntNotificationDecoder:
         return readings
 
 
+class _ShuntConnection:
+    """Retain the transport even when connection setup does not finish."""
+
+    def __init__(self, *, cancel_timeout: float) -> None:
+        self.client: BleakClient | None = None
+        self._cancel_timeout = cancel_timeout
+
+    async def connect(
+        self,
+        device: RenogyBLEDevice,
+        *,
+        max_attempts: int,
+        disconnected_callback: Callable[[BleakClient], None] | None = None,
+    ) -> BleakClient:
+        connection = self
+
+        class TrackedClient(BleakClient):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                # The connector otherwise exposes the client only after discovery.
+                connection.client = self
+
+        task = asyncio.create_task(
+            establish_connection(
+                TrackedClient,
+                device.ble_device,
+                device.name or device.address,
+                max_attempts=max_attempts,
+                use_services_cache=False,
+                disconnected_callback=disconnected_callback,
+            )
+        )
+        try:
+            self.client = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.cancel()
+            try:
+                # BlueZ can await a D-Bus reply while unwinding connect. Give it a
+                # bounded grace period before releasing the retained client here.
+                await asyncio.wait({task}, timeout=self._cancel_timeout)
+            finally:
+                if not task.done():
+                    task.cancel()
+                task.add_done_callback(self._consume_connection_result)
+            raise
+        return self.client
+
+    @staticmethod
+    def _consume_connection_result(task: asyncio.Task[BleakClient]) -> None:
+        """Retrieve any late result after the caller cancelled connection setup."""
+        if not task.cancelled():
+            task.exception()
+
+
 async def _disconnect_client(
-    client: BleakClient, notify_char_uuid: str, timeout: float
+    client: BleakClient, notify_char_uuid: str | None, timeout: float
 ) -> Exception | None:
     """Bound notification cleanup and always attempt to release the connection."""
     error = None
     try:
-        if client.is_connected:
+        if notify_char_uuid is not None and client.is_connected:
             await asyncio.wait_for(client.stop_notify(notify_char_uuid), timeout)
     except Exception as exc:
         error = exc
@@ -253,7 +307,8 @@ class ShuntBleClient:
         event = asyncio.Event()
         parsed_result: dict[str, Any] | None = None
         error: Exception | None = None
-        client: BleakClient | None = None
+        connection = _ShuntConnection(cancel_timeout=self._disconnect_timeout)
+        notify_requested = False
         received = 0
         accepting = True
         success = False
@@ -271,13 +326,8 @@ class ShuntBleClient:
                 event.set()
 
         try:
-            client = await establish_connection(
-                BleakClient,
-                device.ble_device,
-                device.name or device.address,
-                max_attempts=self._max_attempts,
-                use_services_cache=False,
-            )
+            client = await connection.connect(device, max_attempts=self._max_attempts)
+            notify_requested = True
             await client.start_notify(self._notify_char_uuid, notification_handler)
             try:
                 await asyncio.wait_for(event.wait(), self._max_notification_wait_time)
@@ -294,9 +344,11 @@ class ShuntBleClient:
         finally:
             accepting = False
             decoder.reset_buffer()
-            if client is not None:
+            if (client := connection.client) is not None:
                 cleanup_error = await _disconnect_client(
-                    client, self._notify_char_uuid, self._disconnect_timeout
+                    client,
+                    self._notify_char_uuid if notify_requested else None,
+                    self._disconnect_timeout,
                 )
                 if error is None:
                     error = cleanup_error
@@ -331,6 +383,8 @@ class ShuntSubscription:
         self._rediscover_device = rediscover_device
         self._reconnect_delay = reconnect_delay
         self._closed = False
+        self._started = False
+        self._rediscovery_pending: set[str] = set()
         self._task: asyncio.Task[Any] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
 
@@ -355,8 +409,11 @@ class ShuntSubscription:
 
     async def run(self) -> None:
         """Maintain the subscription until closed or cancelled by the caller."""
-        if self._closed or self._task is not None:
-            raise RuntimeError("Subscription already started or closed")
+        if self._started:
+            raise RuntimeError("Subscription already started")
+        self._started = True
+        if self._closed:
+            return
         self._task = asyncio.current_task()
         try:
             while not self._closed:
@@ -383,16 +440,32 @@ class ShuntSubscription:
             logger.debug("Smart Shunt cache clear failed", exc_info=True)
             cache_cleared = False
         if cache_cleared:
+            self._rediscovery_pending.add(device.address)
+        if device.address in self._rediscovery_pending:
             if self._rediscover_device is None:
-                refreshed = await BleakScanner.find_device_by_address(device.address)
+                scan_kwargs: dict[str, Any] = {}
+                details = device.ble_device.details
+                path = details.get("path") if isinstance(details, dict) else None
+                if isinstance(path, str) and path.startswith("/org/bluez/"):
+                    adapter, separator, _ = path.removeprefix("/org/bluez/").partition(
+                        "/"
+                    )
+                    if adapter and separator:
+                        # The adapter keyword also supports our Bleak 2.x minimum.
+                        scan_kwargs["adapter"] = adapter
+                refreshed = await BleakScanner.find_device_by_address(
+                    device.address, **scan_kwargs
+                )
             else:
                 refreshed = self._rediscover_device(device.address)
             if refreshed is None:
                 return
             device.ble_device = refreshed
+            self._rediscovery_pending.discard(device.address)
 
         disconnected = asyncio.Event()
-        client: BleakClient | None = None
+        connection = _ShuntConnection(cancel_timeout=owner._disconnect_timeout)
+        notify_requested = False
         accepting = True
 
         def notification_handler(
@@ -412,17 +485,15 @@ class ShuntSubscription:
                     self._report_error(exc)
 
         try:
-            client = await establish_connection(
-                BleakClient,
-                device.ble_device,
-                device.name or device.address,
+            client = await connection.connect(
+                device,
                 max_attempts=owner._max_attempts,
-                use_services_cache=False,
                 disconnected_callback=lambda _client: disconnected.set(),
             )
             # The connector reuses its callback while retrying. Disconnects from
             # failed attempts must not end the successfully established session.
             disconnected.clear()
+            notify_requested = True
             await client.start_notify(owner._notify_char_uuid, notification_handler)
             while (
                 not self._closed and client.is_connected and not disconnected.is_set()
@@ -436,15 +507,19 @@ class ShuntSubscription:
         finally:
             accepting = False
             decoder.reset_buffer()
-            if client is not None:
-                self._cleanup_task = asyncio.create_task(self._cleanup(client))
+            if (client := connection.client) is not None:
+                self._cleanup_task = asyncio.create_task(
+                    self._cleanup(client, notify_requested=notify_requested)
+                )
                 await asyncio.shield(self._cleanup_task)
                 self._cleanup_task = None
 
-    async def _cleanup(self, client: BleakClient) -> None:
+    async def _cleanup(self, client: BleakClient, *, notify_requested: bool) -> None:
         """Report cleanup errors even when the run task was cancelled again."""
         error = await _disconnect_client(
-            client, self._owner._notify_char_uuid, self._owner._disconnect_timeout
+            client,
+            self._owner._notify_char_uuid if notify_requested else None,
+            self._owner._disconnect_timeout,
         )
         if error is not None:
             self._report_error(error)

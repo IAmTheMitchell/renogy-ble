@@ -206,7 +206,8 @@ def test_read_device_preserves_stale_data_on_connection_failure(monkeypatch) -> 
     assert isinstance(result.error, asyncio.TimeoutError)
     assert result.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
     assert device.parsed_data == {"shunt_voltage": 13.2, "raw_payload": "stale"}
-    assert connection_client_class is BleakClient
+    assert isinstance(connection_client_class, type)
+    assert issubclass(connection_client_class, BleakClient)
     assert connection_kwargs is not None
     assert connection_kwargs["use_services_cache"] is False
 
@@ -724,3 +725,201 @@ def test_intermittent_notify_failure_does_not_report_stale_success(monkeypatch):
     assert not result.success
     assert result.parsed_data == {"shunt_voltage": 12.5}
     assert str(result.error) == "notify failed"
+
+
+@pytest.mark.parametrize("schedule_before_close", [False, True])
+def test_subscription_close_before_start_is_clean(monkeypatch, schedule_before_close):
+    """Immediate shutdown completes a pending first run without opening transport."""
+
+    async def scenario():
+        connection = AsyncMock()
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        resolve, update, error = MagicMock(), MagicMock(), MagicMock()
+        sub = ShuntBleClient().subscribe(
+            resolve_device=resolve, on_update=update, on_error=error
+        )
+        task = asyncio.create_task(sub.run()) if schedule_before_close else None
+        await sub.close()
+        await sub.close()
+        if task is None:
+            task = asyncio.create_task(sub.run())
+        await asyncio.wait_for(task, 1)
+        assert task.done() and not task.cancelled()
+        resolve.assert_not_called()
+        update.assert_not_called()
+        error.assert_not_called()
+        connection.assert_not_awaited()
+        with pytest.raises(RuntimeError):
+            await sub.run()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["read", "subscription"])
+@pytest.mark.parametrize("outcome", ["cancel", "failure"])
+def test_partial_connection_is_released(monkeypatch, mode, outcome):
+    """Service discovery cancellation or failure releases an already open link."""
+    import bleak_retry_connector
+
+    async def scenario():
+        connected, release_discovery, reported = (
+            asyncio.Event(),
+            asyncio.Event(),
+            asyncio.Event(),
+        )
+        clients, errors = [], []
+
+        class PartialClient:
+            def __init__(self, *_args, **_kwargs):
+                self.is_connected = False
+                self.stop_notify = AsyncMock()
+                self.disconnect = AsyncMock(side_effect=self._disconnect)
+                clients.append(self)
+
+            async def connect(self, **_kwargs):
+                self.is_connected = True
+                connected.set()
+                await release_discovery.wait()
+                raise RuntimeError("service discovery failed")
+
+            def _disconnect(self):
+                self.is_connected = False
+
+        def report(error):
+            errors.append(error)
+            reported.set()
+
+        monkeypatch.setattr(shunt_module, "BleakClient", PartialClient)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        # Exercise the real retry connector without accessing the system adapter.
+        monkeypatch.setattr(bleak_retry_connector, "IS_LINUX", False)
+        owner = ShuntBleClient()
+        sub = owner.subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=report
+        )
+        task = asyncio.create_task(
+            owner.read_device(_device()) if mode == "read" else sub.run()
+        )
+        await asyncio.wait_for(connected.wait(), 1)
+        assert clients[0].is_connected
+        if outcome == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            release_discovery.set()
+            if mode == "read":
+                result = await asyncio.wait_for(task, 1)
+                assert not result.success
+                assert str(result.error) == "service discovery failed"
+            else:
+                await asyncio.wait_for(reported.wait(), 1)
+        await sub.close()
+        assert not clients[0].is_connected
+        clients[0].disconnect.assert_awaited_once()
+        clients[0].stop_notify.assert_not_awaited()
+        assert [str(error) for error in errors] == (
+            ["service discovery failed"]
+            if outcome == "failure" and mode == "subscription"
+            else []
+        )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("mode", ["read", "subscription"])
+def test_connection_cancellation_does_not_wait_for_backend_cleanup(monkeypatch, mode):
+    """A stalled BlueZ disconnect while connect unwinds cannot stall shutdown."""
+    import bleak_retry_connector
+
+    async def scenario():
+        entered, unwinding, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        clients = []
+
+        class SlowCancelClient:
+            def __init__(self, *_args, **_kwargs):
+                self.is_connected = True
+                self.stop_notify = AsyncMock()
+                self.disconnect = AsyncMock(side_effect=self._disconnect)
+                clients.append(self)
+
+            async def connect(self, **_kwargs):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    unwinding.set()
+                    await release.wait()
+
+            def _disconnect(self):
+                self.is_connected = False
+
+        monkeypatch.setattr(shunt_module, "BleakClient", SlowCancelClient)
+        monkeypatch.setattr(shunt_module, "clear_cache", AsyncMock(return_value=False))
+        monkeypatch.setattr(bleak_retry_connector, "IS_LINUX", False)
+        errors = []
+        owner = ShuntBleClient(disconnect_timeout=0.01)
+        sub = owner.subscribe(
+            resolve_device=_device, on_update=MagicMock(), on_error=errors.append
+        )
+        task = asyncio.create_task(
+            owner.read_device(_device()) if mode == "read" else sub.run()
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            if mode == "subscription":
+                await asyncio.wait_for(sub.close(), 0.5)
+            else:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 0.5)
+            assert unwinding.is_set()
+            assert task.cancelled()
+            clients[0].disconnect.assert_awaited_once()
+            clients[0].stop_notify.assert_not_awaited()
+            assert not clients[0].is_connected
+            assert errors == []
+        finally:
+            release.set()
+            await sub.close()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("miss_first_scan", [False, True])
+def test_subscription_rediscovery_retains_adapter_and_retries(
+    monkeypatch, miss_first_scan
+):
+    """Invalidated handles stay deferred until rediscovered on their own adapter."""
+
+    async def scenario():
+        device = _device()
+        device.ble_device.details = {"path": "/org/bluez/hci1/dev_AA_BB_CC_DD_EE_FF"}
+        fresh = _mock_ble_device(address=device.address)
+        transport = _Transport()
+        scanner = AsyncMock(side_effect=[None, fresh] if miss_first_scan else [fresh])
+        cache = AsyncMock(side_effect=[True, False] if miss_first_scan else [True])
+        connection = AsyncMock(return_value=transport)
+        monkeypatch.setattr(shunt_module, "clear_cache", cache)
+        monkeypatch.setattr(shunt_module, "establish_connection", connection)
+        monkeypatch.setattr(
+            shunt_module.BleakScanner, "find_device_by_address", scanner
+        )
+        sub = ShuntBleClient().subscribe(
+            resolve_device=lambda: device,
+            on_update=MagicMock(),
+            on_error=MagicMock(),
+            reconnect_delay=0,
+        )
+        asyncio.create_task(sub.run())
+        await asyncio.wait_for(transport.started.wait(), 1)
+        await sub.close()
+        assert scanner.await_count == (2 if miss_first_scan else 1)
+        for scan in scanner.call_args_list:
+            assert scan.args == (device.address,)
+            assert scan.kwargs == {"adapter": "hci1"}
+        connection.assert_awaited_once()
+        assert connection.call_args.args[1] is fresh
+
+    asyncio.run(scenario())

@@ -36,6 +36,8 @@ finally:
 ```
 
 The application owns the task. `run()` may only be called once per subscription.
+If `close()` happens before the first `run()` starts, that run returns normally
+without connecting. A second `run()` still raises `RuntimeError`.
 `close()` is idempotent, cancels retries, and waits for bounded notification and
 connection cleanup. Cancelling `run()` also initiates cleanup and propagates
 `CancelledError`; await `close()` when shutting down. Callbacks execute
@@ -43,19 +45,25 @@ synchronously on the event loop and must not block. Callback exceptions are sent
 to `on_error` without breaking subsequent notification handling. Exceptions in
 `on_error` are logged.
 
-Stopping notifications and disconnecting each have a five-second timeout by
-default (`ShuntBleClient(disconnect_timeout=...)` changes each bound). If the
-application cancels `close()` itself, cancellation propagates and the retained
+Cancelling connection setup, stopping notifications, and disconnecting each have
+a five-second timeout by default (`ShuntBleClient(disconnect_timeout=...)` changes
+each bound). A stalled backend cancellation cannot hold up transport cleanup.
+If the application cancels `close()` itself, cancellation propagates and the retained
 cleanup task continues; a later `close()` can await it. Cleanup errors still reach
 `on_error` even after cancellation. Normal close waits for cleanup to finish.
+A connection opened during service discovery is also released if setup fails or
+is cancelled, even before notification subscription starts.
 
 `resolve_device` runs before every attempt and may return `None` to defer
 connection for discovery or an application cooldown. It should resolve one
 subscription's device. The library clears the BlueZ cache before each sustained
 attempt and disables the service cache. After a successful clear, the optional
 `rediscover_device(address)` callback must return a fresh `BLEDevice` or `None` to
-defer connection. Without that callback, the library uses BleakScanner. Cache
-clearing failures fall back to the existing handle, as needed on other backends.
+defer connection. Without that callback, the library uses BleakScanner on the
+original BlueZ adapter when available. Once a handle has been invalidated, every
+retry waits for rediscovery before connecting, even if a previous scan found
+nothing. When no cache clear has invalidated the handle, cache clearing failures
+fall back to it, as needed on other backends.
 Retries wait ten seconds by default. Unexpected disconnects, connection failures,
 notification failures, and cleanup failures reach `on_error`. Non-live data is
 ignored; sustained sessions impose no new notification inactivity deadline.
