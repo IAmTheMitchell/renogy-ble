@@ -254,10 +254,14 @@ class RenogyBLEDevice:
 
         self.ble_device = ble_device
         self.address = ble_device.address
+        # Optional controller metadata backoff survives transport reconnects.
         self._device_info_timeout_count = 0
         self._device_info_retry_at = 0.0
 
         cleaned_name = clean_device_name(ble_device.name)
+        # BLEDevice.name is an OS name and is not guaranteed to be the local
+        # name from the advertisement. Callers with AdvertisementData should
+        # pass its local_name so family-specific protocol behavior is reliable.
         self.advertised_name = (
             clean_device_name(advertisement_name)
             if advertisement_name
@@ -265,6 +269,7 @@ class RenogyBLEDevice:
         )
         self.name = cleaned_name or "Unknown Renogy Device"
 
+        # Use the provided advertisement RSSI if available, otherwise set to None.
         self.rssi = advertisement_rssi
         self.manufacturer_data = extract_manufacturer_data(
             ble_device, manufacturer_data
@@ -401,6 +406,8 @@ class RenogyBLEDevice:
                 )
                 return False
 
+            # Validate the CRC of the read response. The CRC covers all bytes
+            # except the final two, which carry the low and high CRC bytes.
             payload_len = 3 + byte_count
             crc_low, crc_high = modbus_crc(raw_data[:payload_len])
             if raw_data[payload_len : payload_len + 2] != bytes([crc_low, crc_high]):
@@ -495,6 +502,9 @@ class _PersistentBleSession:
     notify_started: bool = False
     read_target: int | str | None = None
     write_target: int | str | None = None
+    # Set when a read times out. The reply may still be in flight, and a Modbus
+    # read response carries no register address, so it cannot be told apart from
+    # the next command's reply. The session must be dropped rather than reused.
     desynchronized: bool = False
     write_with_response: bool | None = None
 
@@ -535,7 +545,13 @@ class RenogyBleClient:
         cmd_name: str,
         cmd: tuple[int, int, int],
     ) -> tuple[int, int, int] | None:
-        """Return the command to send to this device, or None to skip it."""
+        """Return the command to send to this device, or None to skip it.
+
+        The model string parsed from the device_info command earlier in the
+        same poll cycle identifies G6-generation DCC units, which never answer
+        the discrete status read and need the dynamic_data read extended to
+        cover the status tail instead (see DCC_G6_MODEL_SUFFIX).
+        """
         if device.device_type != "dcc":
             return cmd
         model = device.parsed_data.get("model")
@@ -587,6 +603,7 @@ class RenogyBleClient:
                 await self._ensure_session_ready(device, session)
             except Exception as connection_error:
                 if device.device_type == DEFAULT_DEVICE_TYPE:
+                    # A failed connection breaks the healthy-telemetry streak.
                     device._device_info_timeout_count = 0
                     device._device_info_retry_at = 0.0
                 logger.info(
@@ -614,6 +631,8 @@ class RenogyBleClient:
 
                 command_items = list(commands.items())
                 if device.device_type == "dcc":
+                    # Model-specific DCC command handling needs device_info first.
+                    # Preserve the caller's order for every other command.
                     command_items.sort(key=lambda item: item[1][1] != 12)
 
                 for command_index, (cmd_name, cmd) in enumerate(command_items):
@@ -669,12 +688,17 @@ class RenogyBleClient:
                             and cmd_name == "device_info"
                         ):
                             device_info_timed_out = True
+                        # The response stream is desynchronized; a late reply to
+                        # this command would be misread as the next command's.
                         if (
                             device.device_type != DEFAULT_DEVICE_TYPE
                             or command_index == len(command_items) - 1
                         ):
                             break
 
+                        # Some controllers do not answer every register block.
+                        # Continue on a new connection so a delayed reply cannot
+                        # be mistaken for the next command's response.
                         await self._close_session(
                             device.address,
                             device.name,
@@ -746,10 +770,13 @@ class RenogyBleClient:
                         device._device_info_timeout_count
                         >= DEVICE_INFO_TIMEOUT_THRESHOLD
                     ):
+                        # Retry hourly so temporary faults cannot disable metadata
+                        # permanently.
                         device._device_info_retry_at = (
                             monotonic() + DEVICE_INFO_RETRY_INTERVAL
                         )
                 elif not controller_telemetry_succeeded:
+                    # An unhealthy poll is not evidence of unsupported metadata.
                     device._device_info_timeout_count = 0
                     device._device_info_retry_at = 0.0
 
@@ -800,6 +827,7 @@ class RenogyBleClient:
                 "model", BATTERY_DEFAULT_MODELS[variant]
             )
 
+        # Battery reads should not return stale telemetry from the previous poll.
         device.parsed_data.clear()
         device.parsed_data.update(stable_data)
 
@@ -832,6 +860,8 @@ class RenogyBleClient:
                     )
 
                 device.battery_variant = variant
+                # Battery polls should only expose telemetry refreshed during this read.
+                # Preserve stable metadata that can be reused across polls.
                 parsed_updates = dict(device.parsed_data)
                 device_id = BATTERY_PROTOCOL_DEVICE_IDS[variant]
                 cell_voltage_divisor = battery_cell_voltage_divisor(
@@ -845,6 +875,8 @@ class RenogyBleClient:
                         raise RuntimeError("BLE session is not connected")
 
                     request = build_battery_command(variant, register, word_count)
+                    # RNGRBP requires Write-Without-Response; other families use
+                    # the mode supported by their resolved characteristic.
                     await session.client.write_gatt_char(
                         session.write_target or self._write_char_uuid,
                         request,
@@ -860,6 +892,8 @@ class RenogyBleClient:
                             device_name=device.name,
                         )
                     except asyncio.TimeoutError:
+                        # See _read_device_data: a late reply cannot be matched
+                        # to its request, so stop using this session.
                         break
 
                     if cmd_name == "cell_status":
@@ -1013,6 +1047,8 @@ class RenogyBleClient:
                 parsed_updates: dict[str, Any] = {}
                 read_specs = self._inverter_read_specs(device.model_hint)
                 if device.model_hint == RIV4835CSH1S_MODEL:
+                    # Register 4311 does not respond on this model, so retain the
+                    # caller-supplied model identity instead of probing for it.
                     parsed_updates["model"] = RIV4835CSH1S_MODEL
 
                 for index, spec in enumerate(read_specs):
@@ -1036,6 +1072,8 @@ class RenogyBleClient:
                     )
                     if result_data is None:
                         if session.desynchronized:
+                            # See _read_device_data: a late reply cannot be
+                            # matched to its request, so stop using this session.
                             break
                         continue
 
@@ -1485,6 +1523,8 @@ class RenogyBleClient:
         notification_client = session.client
 
         def notification_handler(_sender, data):
+            # Ignore a callback queued by a connection that was discarded after
+            # a timeout. Its response cannot be matched to a current request.
             if session.client is not notification_client:
                 return
             session.notification_data.extend(data)
