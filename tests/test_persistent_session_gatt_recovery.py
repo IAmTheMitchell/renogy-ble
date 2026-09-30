@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from bleak.exc import BleakCharacteristicNotFoundError
 
 from renogy_ble import ble as ble_module
-from renogy_ble.ble import RENOGY_READ_CHAR_UUID, RenogyBleClient, RenogyBLEDevice
+from renogy_ble.ble import RenogyBleClient, RenogyBLEDevice
 
 
 def test_persistent_session_recovers_from_stale_gatt_cache(monkeypatch):
