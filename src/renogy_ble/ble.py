@@ -14,7 +14,11 @@ from typing import Any, Literal, Optional
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak.uuids import normalize_uuid_str
-from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from bleak_retry_connector import (
+    BleakClientWithServiceCache,
+    clear_cache,
+    establish_connection,
+)
 
 from renogy_ble.battery import (
     BATTERY_COMMANDS,
@@ -1540,10 +1544,26 @@ class RenogyBleClient:
 
             logger.warning(
                 "Characteristic %s missing from cached GATT services for %s; "
-                "reconnecting and retrying once",
+                "clearing cached services before reconnecting and retrying once",
                 session.read_target or self._read_char_uuid,
                 device.name,
             )
+            try:
+                cleared = await clear_cache(device.address)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to clear cached BLE services for %s: %s; "
+                    "reconnecting anyway",
+                    device.name,
+                    exc,
+                )
+            else:
+                logger.warning(
+                    "Cached BLE services for %s %s; reconnecting",
+                    device.name,
+                    "cleared" if cleared else "were not present",
+                )
+
             await self._close_session(
                 device.address,
                 device.name,
