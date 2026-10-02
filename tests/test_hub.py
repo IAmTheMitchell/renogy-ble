@@ -1,7 +1,7 @@
 """Tests for Communication Hub multi-battery discovery and polling."""
 
 import asyncio
-from typing import Callable
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 from renogy_ble.ble import RenogyBleClient, RenogyBLEDevice, modbus_crc
@@ -62,7 +62,7 @@ def _hub_cell_status_frame(
 class _DummyHubClient:
     def __init__(
         self,
-        responders: dict[int | tuple[int, int], bytes],
+        responders: dict[Any, bytes],
     ) -> None:
         self.is_connected = True
         self.responders = responders
