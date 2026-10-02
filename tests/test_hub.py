@@ -39,8 +39,31 @@ def _hub_status_frame(
     return bytes(frame)
 
 
+def _hub_cell_status_frame(
+    slave_id: int,
+    *,
+    cell_millivolts: tuple[int, ...] = (3300,) * 16,
+) -> bytes:
+    payload = bytearray()
+    payload.extend(len(cell_millivolts).to_bytes(2, "big"))
+    for millivolts in cell_millivolts:
+        payload.extend(millivolts.to_bytes(2, "big"))
+
+    payload.extend((0).to_bytes(2, "big"))
+    payload.extend(bytes(68 - len(payload)))
+
+    frame = bytearray([slave_id, 0x03, len(payload)])
+    frame.extend(payload)
+    crc_low, crc_high = modbus_crc(frame)
+    frame.extend([crc_low, crc_high])
+    return bytes(frame)
+
+
 class _DummyHubClient:
-    def __init__(self, responders: dict[int, bytes]) -> None:
+    def __init__(
+        self,
+        responders: dict[int | tuple[int, int], bytes],
+    ) -> None:
         self.is_connected = True
         self.responders = responders
         self.writes: list[bytes] = []
@@ -57,7 +80,10 @@ class _DummyHubClient:
 
         request = bytes(payload)
         self.writes.append(request)
-        response = self.responders.get(request[0])
+        register = int.from_bytes(request[2:4], "big")
+        response = self.responders.get((request[0], register))
+        if response is None:
+            response = self.responders.get(request[0])
         if response is not None:
             self._notify_handler(None, response)
 
@@ -189,6 +215,77 @@ def test_hub_requests_are_read_only_pack_status_reads(monkeypatch) -> None:
     assert request[:6] == bytes([0x30, 0x03, 0x13, 0xB2, 0x00, 0x06])
     assert result.batteries[0].parsed_data["battery_current"] == 3.26
     assert result.batteries[0].parsed_data["battery_power"] == 164.304
+
+
+def test_hub_optionally_reads_and_parses_cell_status(monkeypatch) -> None:
+    responders = {
+        (0x30, 0x13B2): _hub_status_frame(0x30),
+        (0x30, 0x1388): _hub_cell_status_frame(
+            0x30,
+            cell_millivolts=(3300,) * 15 + (3412,),
+        ),
+    }
+    dummy_client = _DummyHubClient(responders)
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        transport_mode="persistent_session",
+        max_notification_wait_time=0.01,
+    )
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30,), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert len(dummy_client.writes) == 2
+    assert dummy_client.writes[0][:6] == bytes(
+        [0x30, 0x03, 0x13, 0xB2, 0x00, 0x06]
+    )
+    assert dummy_client.writes[1][:6] == bytes(
+        [0x30, 0x03, 0x13, 0x88, 0x00, 0x22]
+    )
+
+    data = result.batteries[0].parsed_data
+    assert data["cell_count"] == 16
+    assert data["cell_voltages"] == [3.3] * 15 + [3.412]
+    assert data["cell_voltage_min"] == 3.3
+    assert data["cell_voltage_max"] == 3.412
+    assert data["cell_voltage_delta"] == 0.112
+
+
+def test_hub_cell_status_timeout_preserves_pack_status(monkeypatch) -> None:
+    dummy_client = _DummyHubClient({(0x30, 0x13B2): _hub_status_frame(0x30)})
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        transport_mode="persistent_session",
+        max_notification_wait_time=0.01,
+    )
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30,), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.batteries[0].parsed_data["battery_voltage"] == 50.4
+    assert "cell_voltages" not in result.batteries[0].parsed_data
 
 
 def test_hub_cached_timeout_preserves_discovery_and_drops_session(monkeypatch) -> None:
