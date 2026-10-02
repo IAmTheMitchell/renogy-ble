@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from renogy_ble.battery import (
+    BATTERY_COMMANDS,
     BATTERY_VARIANT_LEGACY,
     HUB_BATTERY_PACK_STATUS_REGISTER,
     HUB_BATTERY_PACK_STATUS_WORD_COUNT,
     build_battery_command,
+    parse_battery_cell_status,
     parse_hub_battery_pack_status,
 )
 from renogy_ble.ble import (
@@ -83,6 +85,7 @@ class RenogyCommunicationHub:
         device: RenogyBLEDevice,
         *,
         rediscover: bool = False,
+        include_cell_status: bool = False,
     ) -> RenogyHubBatteryReadResult:
         """Discover or poll Communication Hub batteries using one BLE session."""
         session = await self._client._prepare_session(device)
@@ -168,6 +171,13 @@ class RenogyCommunicationHub:
                         battery.slave_id for battery in batteries
                     )
 
+                if include_cell_status and batteries and error is None:
+                    await self._enrich_batteries_with_cell_status(
+                        device,
+                        session,
+                        batteries,
+                    )
+
                 if not batteries and error is None:
                     error = RuntimeError("No Communication Hub batteries responded")
             except Exception as exc:  # noqa: BLE001
@@ -228,6 +238,94 @@ class RenogyCommunicationHub:
                 function_code=0x03,
                 word_count=HUB_BATTERY_PACK_STATUS_WORD_COUNT,
                 cmd_name=f"Hub battery 0x{slave_id:02X}",
+                device_name=device_name,
+                timeout=self._timeout,
+            )
+        except asyncio.TimeoutError:
+            return None
+
+    async def _enrich_batteries_with_cell_status(
+        self,
+        device: RenogyBLEDevice,
+        session: _PersistentBleSession,
+        batteries: list[RenogyHubBattery],
+    ) -> None:
+        """Add optional per-cell telemetry without invalidating pack-status data."""
+        for index, battery in enumerate(batteries):
+            response = await self._read_battery_cell_status(
+                session,
+                slave_id=battery.slave_id,
+                device_name=device.name,
+            )
+            if response is not None:
+                parsed = parse_battery_cell_status(
+                    response,
+                    variant=BATTERY_VARIANT_LEGACY,
+                )
+                if parsed:
+                    batteries[index] = RenogyHubBattery(
+                        slave_id=battery.slave_id,
+                        parsed_data={**battery.parsed_data, **parsed},
+                    )
+                continue
+
+            logger.debug(
+                "No Communication Hub cell-status response from slave 0x%02X on %s",
+                battery.slave_id,
+                device.name,
+            )
+            if not session.desynchronized or index == len(batteries) - 1:
+                continue
+
+            # A strict read timeout can leave a late response in flight. Reconnect
+            # before requesting cell data from another slave so responses cannot be
+            # attributed to the wrong battery.
+            await self._client._close_session(
+                device.address,
+                device.name,
+                session,
+                remove=False,
+            )
+            try:
+                await self._client._ensure_session_ready(device, session)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "Unable to reconnect after Hub cell-status timeout on %s: %s",
+                    device.name,
+                    exc,
+                )
+                break
+
+    async def _read_battery_cell_status(
+        self,
+        session: _PersistentBleSession,
+        *,
+        slave_id: int,
+        device_name: str,
+    ) -> bytes | None:
+        """Read one battery cell-status block through the Communication Hub."""
+        register, word_count = BATTERY_COMMANDS["cell_status"]
+        request = build_battery_command(
+            BATTERY_VARIANT_LEGACY,
+            register,
+            word_count,
+            device_id=slave_id,
+        )
+        self._client._reset_notifications(session)
+        if session.client is None:
+            raise RuntimeError("BLE session is not connected")
+
+        await session.client.write_gatt_char(
+            session.write_target or self._client._write_char_uuid,
+            request,
+        )
+        try:
+            return await self._client._wait_for_valid_read_response(
+                session,
+                expected_device_id=slave_id,
+                function_code=0x03,
+                word_count=word_count,
+                cmd_name=f"Hub battery 0x{slave_id:02X} cell status",
                 device_name=device_name,
                 timeout=self._timeout,
             )
