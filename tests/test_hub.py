@@ -1,8 +1,10 @@
 """Tests for Communication Hub multi-battery discovery and polling."""
 
 import asyncio
-from typing import Callable
+from typing import Any, Callable
 from unittest.mock import MagicMock
+
+import pytest
 
 from renogy_ble.ble import RenogyBleClient, RenogyBLEDevice, modbus_crc
 from renogy_ble.hub import HUB_BATTERY_SLAVE_IDS, RenogyCommunicationHub
@@ -39,8 +41,31 @@ def _hub_status_frame(
     return bytes(frame)
 
 
+def _hub_cell_status_frame(
+    slave_id: int,
+    *,
+    cell_millivolts: tuple[int, ...] = (3300,) * 16,
+) -> bytes:
+    payload = bytearray()
+    payload.extend(len(cell_millivolts).to_bytes(2, "big"))
+    for millivolts in cell_millivolts:
+        payload.extend(millivolts.to_bytes(2, "big"))
+
+    payload.extend((0).to_bytes(2, "big"))
+    payload.extend(bytes(68 - len(payload)))
+
+    frame = bytearray([slave_id, 0x03, len(payload)])
+    frame.extend(payload)
+    crc_low, crc_high = modbus_crc(frame)
+    frame.extend([crc_low, crc_high])
+    return bytes(frame)
+
+
 class _DummyHubClient:
-    def __init__(self, responders: dict[int, bytes]) -> None:
+    def __init__(
+        self,
+        responders: dict[Any, bytes],
+    ) -> None:
         self.is_connected = True
         self.responders = responders
         self.writes: list[bytes] = []
@@ -57,7 +82,10 @@ class _DummyHubClient:
 
         request = bytes(payload)
         self.writes.append(request)
-        response = self.responders.get(request[0])
+        register = int.from_bytes(request[2:4], "big")
+        response = self.responders.get((request[0], register))
+        if response is None:
+            response = self.responders.get(request[0])
         if response is not None:
             self._notify_handler(None, response)
 
@@ -191,6 +219,73 @@ def test_hub_requests_are_read_only_pack_status_reads(monkeypatch) -> None:
     assert result.batteries[0].parsed_data["battery_power"] == 164.304
 
 
+def test_hub_optionally_reads_and_parses_cell_status(monkeypatch) -> None:
+    responders = {
+        (0x30, 0x13B2): _hub_status_frame(0x30),
+        (0x30, 0x1388): _hub_cell_status_frame(
+            0x30,
+            cell_millivolts=(3300,) * 15 + (3412,),
+        ),
+    }
+    dummy_client = _DummyHubClient(responders)
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        transport_mode="persistent_session",
+        max_notification_wait_time=0.01,
+    )
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30,), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert len(dummy_client.writes) == 2
+    assert dummy_client.writes[0][:6] == bytes([0x30, 0x03, 0x13, 0xB2, 0x00, 0x06])
+    assert dummy_client.writes[1][:6] == bytes([0x30, 0x03, 0x13, 0x88, 0x00, 0x22])
+
+    data = result.batteries[0].parsed_data
+    assert data["cell_count"] == 16
+    assert data["cell_voltages"] == [3.3] * 15 + [3.412]
+    assert data["cell_voltage_min"] == 3.3
+    assert data["cell_voltage_max"] == 3.412
+    assert data["cell_voltage_delta"] == 0.112
+
+
+def test_hub_cell_status_timeout_preserves_pack_status(monkeypatch) -> None:
+    dummy_client = _DummyHubClient({(0x30, 0x13B2): _hub_status_frame(0x30)})
+
+    async def _fake_establish_connection(*_args, **_kwargs):
+        dummy_client.is_connected = True
+        return dummy_client
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
+
+    client = RenogyBleClient(
+        transport_mode="persistent_session",
+        max_notification_wait_time=0.01,
+    )
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30,), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert result.batteries[0].parsed_data["battery_voltage"] == 50.4
+    assert "cell_voltages" not in result.batteries[0].parsed_data
+
+
 def test_hub_cached_timeout_preserves_discovery_and_drops_session(monkeypatch) -> None:
     responders = {
         0x30: _hub_status_frame(0x30),
@@ -299,3 +394,129 @@ def test_hub_empty_discovery_reports_no_batteries(monkeypatch) -> None:
     assert result.batteries == []
     assert isinstance(result.error, RuntimeError)
     assert hub.discovered_slave_ids(device) == ()
+
+
+@pytest.mark.parametrize("transport_mode", ["persistent_session", "per_operation"])
+def test_hub_cell_timeout_reconnects_and_ignores_old_notifications(
+    monkeypatch, transport_mode
+) -> None:
+    first = _DummyHubClient(
+        {
+            (0x30, 0x13B2): _hub_status_frame(0x30),
+            (0x31, 0x13B2): _hub_status_frame(0x31),
+        }
+    )
+
+    class ReconnectedClient(_DummyHubClient):
+        async def write_gatt_char(self, _uuid, payload) -> None:
+            # A queued callback from the discarded connection must be ignored.
+            assert first._notify_handler is not None
+            first._notify_handler(
+                None, _hub_cell_status_frame(0x31, cell_millivolts=(3999,) * 16)
+            )
+            await super().write_gatt_char(_uuid, payload)
+
+    second = ReconnectedClient(
+        {
+            (0x31, 0x1388): _hub_cell_status_frame(0x31, cell_millivolts=(3412,) * 16),
+        }
+    )
+    connections = iter((first, second))
+
+    async def connect(*_args, **_kwargs):
+        return next(connections)
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", connect)
+    client = RenogyBleClient(transport_mode=transport_mode)
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30, 0x31), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert [battery.slave_id for battery in result.batteries] == [0x30, 0x31]
+    assert "cell_voltages" not in result.batteries[0].parsed_data
+    assert result.batteries[1].parsed_data["cell_voltages"] == [3.412] * 16
+    assert first.disconnect_calls == 1
+    assert len(first.writes) == 3
+    assert len(second.writes) == 1
+    assert second.disconnect_calls == (transport_mode == "per_operation")
+
+
+@pytest.mark.parametrize("transport_mode", ["persistent_session", "per_operation"])
+def test_hub_cell_reconnect_notification_failure_closes_connection(
+    monkeypatch, transport_mode
+) -> None:
+    first = _DummyHubClient(
+        {
+            (0x30, 0x13B2): _hub_status_frame(0x30),
+            (0x31, 0x13B2): _hub_status_frame(0x31),
+        }
+    )
+
+    class FailedNotifyClient(_DummyHubClient):
+        async def start_notify(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("Notification setup failed")
+
+    second = FailedNotifyClient({})
+    connections = iter((first, second))
+
+    async def connect(*_args, **_kwargs):
+        return next(connections)
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", connect)
+    client = RenogyBleClient(transport_mode=transport_mode)
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30, 0x31), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+    result = asyncio.run(hub.read_batteries(device, include_cell_status=True))
+
+    assert result.success is True
+    assert result.error is None
+    assert [battery.slave_id for battery in result.batteries] == [0x30, 0x31]
+    assert all(b.parsed_data["battery_voltage"] == 50.4 for b in result.batteries)
+    assert hub.discovered_slave_ids(device) == (0x30, 0x31)
+    assert first.disconnect_calls == 1
+    assert second.disconnect_calls == 1
+    assert not second.is_connected
+    assert second.writes == []
+    assert device.address not in client._persistent_sessions
+
+
+def test_hub_final_cell_timeout_reconnects_on_next_poll(monkeypatch) -> None:
+    first = _DummyHubClient({(0x30, 0x13B2): _hub_status_frame(0x30)})
+    second = _DummyHubClient(
+        {
+            (0x30, 0x13B2): _hub_status_frame(0x30),
+            (0x30, 0x1388): _hub_cell_status_frame(0x30),
+        }
+    )
+    connections = iter((first, second))
+
+    async def connect(*_args, **_kwargs):
+        return next(connections)
+
+    from renogy_ble import ble as ble_module
+
+    monkeypatch.setattr(ble_module, "establish_connection", connect)
+    client = RenogyBleClient(transport_mode="persistent_session")
+    hub = RenogyCommunicationHub(client, slave_ids=(0x30,), timeout=0.01)
+    device = RenogyBLEDevice(_mock_ble_device(), device_type="inverter")
+
+    async def exercise():
+        initial = await hub.read_batteries(device, include_cell_status=True)
+        assert first.disconnect_calls == 1
+        assert device.address not in client._persistent_sessions
+        return initial, await hub.read_batteries(device, include_cell_status=True)
+
+    initial, result = asyncio.run(exercise())
+    assert initial.success is True
+    assert initial.error is None
+    assert "cell_voltages" not in initial.batteries[0].parsed_data
+    assert result.success is True
+    assert result.error is None
+    assert result.batteries[0].parsed_data["cell_voltages"] == [3.3] * 16
+    assert len(second.writes) == 2
