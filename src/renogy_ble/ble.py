@@ -11,10 +11,15 @@ from datetime import datetime, timedelta
 from time import monotonic
 from typing import Any, Literal, Optional
 
+from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
-from bleak.exc import BleakError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak.uuids import normalize_uuid_str
-from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from bleak_retry_connector import (
+    BleakClientWithServiceCache,
+    clear_cache,
+    establish_connection,
+)
 
 from renogy_ble.battery import (
     BATTERY_COMMANDS,
@@ -257,6 +262,8 @@ class RenogyBLEDevice:
         # Optional controller metadata backoff survives transport reconnects.
         self._device_info_timeout_count = 0
         self._device_info_retry_at = 0.0
+        # Cache invalidation can remove the BlueZ device until rediscovery.
+        self._gatt_rediscovery_adapter: str | None = None
 
         cleaned_name = clean_device_name(ble_device.name)
         # BLEDevice.name is an OS name and is not guaranteed to be the local
@@ -1494,9 +1501,21 @@ class RenogyBleClient:
         self,
         device: RenogyBLEDevice,
         session: _PersistentBleSession,
+        *,
+        retry_missing_characteristic: bool = True,
     ) -> None:
         """Ensure the BLE connection and notifications are ready for use."""
         if session.client is None or not session.client.is_connected:
+            if device._gatt_rediscovery_adapter is not None:
+                refreshed = await BleakScanner.find_device_by_address(
+                    device.address, adapter=device._gatt_rediscovery_adapter
+                )
+                if refreshed is None:
+                    raise BleakError(
+                        f"Device {device.address} not found after cache clear"
+                    )
+                device.ble_device = refreshed
+                device._gatt_rediscovery_adapter = None
             connection_kwargs = self._connection_kwargs()
             session.client = await establish_connection(
                 BleakClientWithServiceCache,
@@ -1528,9 +1547,67 @@ class RenogyBleClient:
             session.notification_data.extend(data)
             session.notification_event.set()
 
-        await session.client.start_notify(
-            session.read_target or self._read_char_uuid, notification_handler
-        )
+        try:
+            await session.client.start_notify(
+                session.read_target or self._read_char_uuid, notification_handler
+            )
+        except BleakCharacteristicNotFoundError:
+            if not retry_missing_characteristic:
+                raise
+
+            logger.warning(
+                "Characteristic %s missing from cached GATT services for %s; "
+                "clearing cached services before reconnecting and retrying once",
+                session.read_target or self._read_char_uuid,
+                device.name,
+            )
+            details = device.ble_device.details
+            path = details.get("path") if isinstance(details, dict) else None
+            adapter = None
+            if isinstance(path, str) and path.startswith("/org/bluez/"):
+                adapter_name, separator, _ = path.removeprefix("/org/bluez/").partition(
+                    "/"
+                )
+                if adapter_name and separator:
+                    adapter = adapter_name
+            try:
+                cleared = await clear_cache(device.address)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to clear cached BLE services for %s: %s; "
+                    "reconnecting anyway",
+                    device.name,
+                    exc,
+                )
+            except asyncio.CancelledError:
+                # Invalidation may already have removed the device before cancellation.
+                device._gatt_rediscovery_adapter = adapter
+                await self._close_session(
+                    device.address, device.name, session, remove=False
+                )
+                raise
+            else:
+                if cleared:
+                    device._gatt_rediscovery_adapter = adapter
+                logger.warning(
+                    "Cached BLE services for %s %s; reconnecting",
+                    device.name,
+                    "cleared" if cleared else "were not present",
+                )
+
+            await self._close_session(
+                device.address,
+                device.name,
+                session,
+                remove=False,
+            )
+            await self._ensure_session_ready(
+                device,
+                session,
+                retry_missing_characteristic=False,
+            )
+            return
+
         session.notify_started = True
 
     def _resolve_battery_characteristics(
