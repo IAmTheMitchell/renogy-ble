@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Callable
 from typing import Any
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
-from bleak_retry_connector import establish_connection
+from bleak_retry_connector import clear_cache, establish_connection
 
 from renogy_ble.ble import RenogyBLEDevice, RenogyBleReadResult
 
@@ -100,51 +103,152 @@ def parse_shunt_payload(payload: bytes) -> dict[str, Any] | None:
     }
 
 
-def _extract_live_payload_window(
-    payload: bytes, offset: int, expected_length: int
-) -> bytes | None:
-    """Return a normalized live-data payload window from the given stream offset."""
-    payload_length = len(payload)
-    if (
-        payload_length >= offset + expected_length
-        and payload[offset : offset + len(SHUNT_LIVE_HEADER)] == SHUNT_LIVE_HEADER
-    ):
-        return payload[offset : offset + expected_length]
+class ShuntNotificationDecoder:
+    """Decode one device's byte stream and integrate its energy totals.
 
-    framed_length = expected_length + SHUNT_FRAMED_PREFIX_LENGTH
-    framed_offset = offset + SHUNT_FRAMED_PREFIX_LENGTH
-    if (
-        payload_length >= offset + framed_length
-        and payload[offset : offset + len(SHUNT_FRAMED_PREFIX)] == SHUNT_FRAMED_PREFIX
-        and payload[framed_offset : framed_offset + len(SHUNT_LIVE_HEADER)]
-        == SHUNT_LIVE_HEADER
-    ):
-        return payload[framed_offset : framed_offset + expected_length]
+    Feed arbitrary notification fragments in arrival order. Each returned mapping
+    is a complete normalized reading, including raw diagnostics. Reset the buffer
+    at each connection boundary; energy totals survive resets. Use one decoder per
+    device and a monotonic clock (seconds). No checksum is known for this format;
+    the live header and existing field plausibility checks determine validity.
+    """
 
-    return None
+    def __init__(
+        self,
+        *,
+        expected_length: int = SHUNT_EXPECTED_PAYLOAD_LENGTH,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if expected_length < SHUNT_REQUIRED_FIELD_LENGTH:
+            raise ValueError("expected_length must include the required fields")
+        self._expected_length = expected_length
+        self._clock = clock
+        self._buffer = bytearray()
+        self._last_ts: float | None = None
+        self._charged_wh = 0.0
+        self._discharged_wh = 0.0
+
+    def reset_buffer(self) -> None:
+        """Discard partial bytes without resetting the device's energy totals."""
+        self._buffer.clear()
+
+    def feed(self, data: bytes | bytearray) -> list[dict[str, Any]]:
+        """Consume bytes, returning all complete live readings in stream order."""
+        self._buffer.extend(data)
+        readings = []
+        while True:
+            offset = self._buffer.find(SHUNT_LIVE_HEADER)
+            if offset < 0:
+                # Retain enough bytes for a header split across notifications.
+                del self._buffer[: -(len(SHUNT_LIVE_HEADER) - 1)]
+                break
+            del self._buffer[:offset]
+            if len(self._buffer) < self._expected_length:
+                break
+            raw = bytes(self._buffer[: self._expected_length])
+            parsed = parse_shunt_payload(raw)
+            if parsed is None:
+                del self._buffer[0]
+                continue
+            del self._buffer[: self._expected_length]
+            now = self._clock()
+            if self._last_ts is not None:
+                dt_hours = (now - self._last_ts) / 3600
+                if 0 < dt_hours < 10:
+                    energy_wh = float(parsed[KEY_SHUNT_POWER]) * dt_hours
+                    self._charged_wh += max(energy_wh, 0)
+                    self._discharged_wh += max(-energy_wh, 0)
+            self._last_ts = now
+            parsed[KEY_SHUNT_ENERGY_CHARGED_TOTAL] = round(self._charged_wh / 1000, 3)
+            parsed[KEY_SHUNT_ENERGY_DISCHARGED_TOTAL] = round(
+                self._discharged_wh / 1000, 3
+            )
+            parsed["raw_payload"] = raw.hex()
+            parsed["raw_words"] = [
+                int.from_bytes(raw[i : i + 2], "big") for i in range(0, len(raw) - 1, 2)
+            ]
+            readings.append(parsed)
+        return readings
 
 
-def _find_valid_payload_window(
-    payload: bytes, expected_length: int
-) -> tuple[bytes, dict[str, Any]] | None:
-    """Return the first valid payload window and parsed data from a byte stream."""
-    if len(payload) < expected_length:
-        return None
+class _ShuntConnection:
+    """Retain the transport even when connection setup does not finish."""
 
-    max_offset = len(payload) - expected_length
-    for offset in range(max_offset + 1):
-        window = _extract_live_payload_window(payload, offset, expected_length)
-        if window is None:
-            continue
-        parsed = parse_shunt_payload(window)
-        if parsed is not None:
-            return window, parsed
+    def __init__(self, *, cancel_timeout: float) -> None:
+        self.client: BleakClient | None = None
+        self._cancel_timeout = cancel_timeout
 
-    return None
+    async def connect(
+        self,
+        device: RenogyBLEDevice,
+        *,
+        max_attempts: int,
+        disconnected_callback: Callable[[BleakClient], None] | None = None,
+    ) -> BleakClient:
+        connection = self
+
+        class TrackedClient(BleakClient):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                # The connector otherwise exposes the client only after discovery.
+                connection.client = self
+
+        task = asyncio.create_task(
+            establish_connection(
+                TrackedClient,
+                device.ble_device,
+                device.name or device.address,
+                max_attempts=max_attempts,
+                use_services_cache=False,
+                disconnected_callback=disconnected_callback,
+            )
+        )
+        try:
+            self.client = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.cancel()
+            try:
+                # BlueZ can await a D-Bus reply while unwinding connect. Give it a
+                # bounded grace period before releasing the retained client here.
+                await asyncio.wait({task}, timeout=self._cancel_timeout)
+            finally:
+                if not task.done():
+                    task.cancel()
+                task.add_done_callback(self._consume_connection_result)
+            raise
+        return self.client
+
+    @staticmethod
+    def _consume_connection_result(task: asyncio.Task[BleakClient]) -> None:
+        """Retrieve any late result after the caller cancelled connection setup."""
+        if not task.cancelled():
+            task.exception()
+
+
+async def _disconnect_client(
+    client: BleakClient, notify_char_uuid: str | None, timeout: float
+) -> Exception | None:
+    """Bound notification cleanup and always attempt to release the connection."""
+    error = None
+    try:
+        if notify_char_uuid is not None and client.is_connected:
+            await asyncio.wait_for(client.stop_notify(notify_char_uuid), timeout)
+    except Exception as exc:
+        error = exc
+    finally:
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout)
+        except Exception as exc:
+            error = exc
+    return error
 
 
 class ShuntBleClient:
-    """BLE client for Smart Shunt notification reads."""
+    """Read or subscribe to Smart Shunt data with per-device decoder state.
+
+    Do not run multiple reads/subscriptions for the same address concurrently.
+    The caller owns subscription tasks and must await ``close()`` on shutdown.
+    """
 
     def __init__(
         self,
@@ -153,126 +257,269 @@ class ShuntBleClient:
         expected_length: int = SHUNT_EXPECTED_PAYLOAD_LENGTH,
         max_notification_wait_time: float = 3.0,
         max_attempts: int = 3,
+        disconnect_timeout: float = 5.0,
     ) -> None:
         self._notify_char_uuid = notify_char_uuid
         self._expected_length = expected_length
         self._max_notification_wait_time = max_notification_wait_time
         self._max_attempts = max_attempts
-        self._energy_state: dict[str, tuple[float, float, float]] = {}
+        self._disconnect_timeout = disconnect_timeout
+        self._decoders: dict[str, ShuntNotificationDecoder] = {}
 
-    def _integrate_energy_totals(
-        self, *, device_address: str, power_w: float | int | None, now_ts: float
-    ) -> tuple[float, float]:
-        """Integrate charging and discharging totals in kWh for one device."""
-        state = self._energy_state.get(device_address)
-        if state is None:
-            self._energy_state[device_address] = (now_ts, 0.0, 0.0)
-            return 0.0, 0.0
+    def _decoder(self, address: str) -> ShuntNotificationDecoder:
+        if address not in self._decoders:
+            self._decoders[address] = ShuntNotificationDecoder(
+                expected_length=self._expected_length
+            )
+        return self._decoders[address]
 
-        last_ts, charged_wh, discharged_wh = state
-        dt_hours = (now_ts - last_ts) / 3600
-        if 0 < dt_hours < 10 and power_w is not None:
-            energy_wh = float(power_w) * dt_hours
-            if energy_wh >= 0:
-                charged_wh += energy_wh
-            else:
-                discharged_wh += abs(energy_wh)
+    def subscribe(
+        self,
+        *,
+        resolve_device: Callable[[], RenogyBLEDevice | None],
+        on_update: Callable[[dict[str, Any]], None],
+        on_error: Callable[[Exception], None],
+        rediscover_device: Callable[[str], BLEDevice | None] | None = None,
+        reconnect_delay: float = 10.0,
+    ) -> ShuntSubscription:
+        """Create a subscription; run its ``run()`` coroutine in the caller's task.
 
-        self._energy_state[device_address] = (now_ts, charged_wh, discharged_wh)
-        return charged_wh / 1000, discharged_wh / 1000
+        ``resolve_device`` is called before each connection attempt. Returning None
+        defers connection (for discovery or a caller's retry cooldown). After a
+        successful BlueZ cache clear, ``rediscover_device`` supplies a fresh handle;
+        without it, BleakScanner performs discovery. Callbacks run synchronously on
+        the event loop and must not block. Errors include connection, notification,
+        unexpected disconnect, callback and cleanup failures. Retrying is automatic.
+        """
+        return ShuntSubscription(
+            self,
+            resolve_device=resolve_device,
+            on_update=on_update,
+            on_error=on_error,
+            rediscover_device=rediscover_device,
+            reconnect_delay=reconnect_delay,
+        )
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
-        """Connect, wait for one notification payload, parse, and return result."""
-        payload = bytearray()
+        """Connect, decode the first complete live reading, then disconnect."""
+        decoder = self._decoder(device.address)
+        decoder.reset_buffer()
         event = asyncio.Event()
-        error: Exception | None = None
-        success = False
         parsed_result: dict[str, Any] | None = None
-        raw_payload: bytes | None = None
+        error: Exception | None = None
+        connection = _ShuntConnection(cancel_timeout=self._disconnect_timeout)
+        notify_requested = False
+        received = 0
+        accepting = True
+        success = False
 
-        try:
-            client = await establish_connection(
-                # Smart Shunt reconnects can present a fresh characteristic object
-                # path, so avoid reusing cached service state for each read.
-                BleakClient,
-                device.ble_device,
-                device.name or device.address,
-                max_attempts=self._max_attempts,
-                use_services_cache=False,
-            )
-        except (BleakError, asyncio.TimeoutError) as exc:
-            logger.info("Failed to connect to Smart Shunt %s: %s", device.address, exc)
-            return RenogyBleReadResult(False, dict(device.parsed_data), exc)
-
-        try:
-
-            def notification_handler(
-                _sender: BleakGATTCharacteristic | int | str, data: bytearray
-            ) -> None:
-                payload.extend(data)
+        def notification_handler(
+            _sender: BleakGATTCharacteristic | int | str, data: bytearray
+        ) -> None:
+            nonlocal parsed_result, received
+            if not accepting or parsed_result is not None:
+                return
+            received += len(data)
+            readings = decoder.feed(data)
+            if readings:
+                parsed_result = readings[0]
                 event.set()
 
+        try:
+            client = await connection.connect(device, max_attempts=self._max_attempts)
+            notify_requested = True
             await client.start_notify(self._notify_char_uuid, notification_handler)
-            loop = asyncio.get_running_loop()
-            start = loop.time()
-
-            while parsed_result is None:
-                remaining = self._max_notification_wait_time - (loop.time() - start)
-                if remaining <= 0:
-                    break
-                try:
-                    await asyncio.wait_for(event.wait(), remaining)
-                except asyncio.TimeoutError:
-                    break
-                event.clear()
-
-                maybe_parsed = _find_valid_payload_window(
-                    bytes(payload), self._expected_length
-                )
-                if maybe_parsed is not None:
-                    raw_payload, parsed_result = maybe_parsed
-
-            if parsed_result and raw_payload:
-                now = loop.time()
-                charged_kwh, discharged_kwh = self._integrate_energy_totals(
-                    device_address=device.address,
-                    power_w=parsed_result.get(KEY_SHUNT_POWER),
-                    now_ts=now,
-                )
-                parsed_result[KEY_SHUNT_ENERGY_CHARGED_TOTAL] = round(charged_kwh, 3)
-                parsed_result[KEY_SHUNT_ENERGY_DISCHARGED_TOTAL] = round(
-                    discharged_kwh, 3
-                )
-
-                parsed_result["raw_payload"] = raw_payload.hex()
-                parsed_result["raw_words"] = [
-                    int.from_bytes(
-                        raw_payload[i * 2 : (i + 1) * 2], "big", signed=False
-                    )
-                    for i in range(len(raw_payload) // 2)
-                ]
-                device.parsed_data = parsed_result
-                success = True
-            else:
+            try:
+                await asyncio.wait_for(event.wait(), self._max_notification_wait_time)
+            except TimeoutError:
                 error = RuntimeError(
-                    "Empty shunt payload parsed "
-                    f"(received {len(payload)} bytes in "
+                    f"Empty shunt payload parsed (received {received} bytes in "
                     f"{self._max_notification_wait_time}s)"
                 )
-
-            await client.stop_notify(self._notify_char_uuid)
-        except asyncio.TimeoutError as exc:
-            error = exc
-        except asyncio.CancelledError:
-            raise
-        except (BleakError, Exception) as exc:  # noqa: BLE001
+            if parsed_result is not None:
+                device.parsed_data = parsed_result
+                success = True
+        except Exception as exc:
             error = exc
         finally:
-            if client.is_connected:
-                try:
-                    await client.disconnect()
-                except Exception as exc:  # noqa: BLE001
-                    if error is None:
-                        error = exc
-
+            accepting = False
+            decoder.reset_buffer()
+            if (client := connection.client) is not None:
+                cleanup_error = await _disconnect_client(
+                    client,
+                    self._notify_char_uuid if notify_requested else None,
+                    self._disconnect_timeout,
+                )
+                if error is None:
+                    error = cleanup_error
         return RenogyBleReadResult(success, dict(device.parsed_data), error)
+
+
+class ShuntSubscription:
+    """A sustained, reconnecting Shunt session created by ShuntBleClient.subscribe.
+
+    Run once, in an application-owned task. Cancellation propagates after bounded
+    cleanup. ``close()`` is idempotent and waits for connection cleanup, including
+    when the application already cancelled the task. A closed subscription cannot
+    be restarted; create another using the same client to retain energy totals.
+    """
+
+    def __init__(
+        self,
+        owner: ShuntBleClient,
+        *,
+        resolve_device: Callable[[], RenogyBLEDevice | None],
+        on_update: Callable[[dict[str, Any]], None],
+        on_error: Callable[[Exception], None],
+        rediscover_device: Callable[[str], BLEDevice | None] | None,
+        reconnect_delay: float,
+    ) -> None:
+        if reconnect_delay < 0:
+            raise ValueError("reconnect_delay must be non-negative")
+        self._owner = owner
+        self._resolve_device = resolve_device
+        self._on_update = on_update
+        self._on_error = on_error
+        self._rediscover_device = rediscover_device
+        self._reconnect_delay = reconnect_delay
+        self._closed = False
+        self._started = False
+        self._rediscovery_pending: set[str] = set()
+        self._task: asyncio.Task[Any] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
+
+    def _report_error(self, error: Exception) -> None:
+        try:
+            self._on_error(error)
+        except Exception:
+            logger.exception("Smart Shunt error callback failed")
+
+    async def close(self) -> None:
+        """Stop reconnecting and await the running session's bounded cleanup."""
+        self._closed = True
+        task = self._task
+        if task is not None and task is not asyncio.current_task():
+            if not task.cancelling():
+                task.cancel()
+            # A cancelled run task is expected; cancellation of close itself must
+            # still propagate without interrupting the transport's cleanup task.
+            await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+        if self._cleanup_task is not None:
+            await asyncio.shield(self._cleanup_task)
+
+    async def run(self) -> None:
+        """Maintain the subscription until closed or cancelled by the caller."""
+        if self._started:
+            raise RuntimeError("Subscription already started")
+        self._started = True
+        if self._closed:
+            return
+        self._task = asyncio.current_task()
+        try:
+            while not self._closed:
+                try:
+                    device = self._resolve_device()
+                    if device is not None:
+                        await self._session(device)
+                except Exception as exc:
+                    self._report_error(exc)
+                if not self._closed:
+                    await asyncio.sleep(self._reconnect_delay)
+        finally:
+            self._closed = True
+            self._task = None
+
+    async def _session(self, device: RenogyBLEDevice) -> None:
+        owner = self._owner
+        decoder = owner._decoder(device.address)
+        decoder.reset_buffer()
+        try:
+            cache_cleared = await clear_cache(device.address)
+        except Exception:
+            # Cache clearing is unavailable on some backends; still try connecting.
+            logger.debug("Smart Shunt cache clear failed", exc_info=True)
+            cache_cleared = False
+        if cache_cleared:
+            self._rediscovery_pending.add(device.address)
+        if device.address in self._rediscovery_pending:
+            if self._rediscover_device is None:
+                scan_kwargs: dict[str, Any] = {}
+                details = device.ble_device.details
+                path = details.get("path") if isinstance(details, dict) else None
+                if isinstance(path, str) and path.startswith("/org/bluez/"):
+                    adapter, separator, _ = path.removeprefix("/org/bluez/").partition(
+                        "/"
+                    )
+                    if adapter and separator:
+                        # The adapter keyword also supports our Bleak 2.x minimum.
+                        scan_kwargs["adapter"] = adapter
+                refreshed = await BleakScanner.find_device_by_address(
+                    device.address, **scan_kwargs
+                )
+            else:
+                refreshed = self._rediscover_device(device.address)
+            if refreshed is None:
+                return
+            device.ble_device = refreshed
+            self._rediscovery_pending.discard(device.address)
+
+        disconnected = asyncio.Event()
+        connection = _ShuntConnection(cancel_timeout=owner._disconnect_timeout)
+        notify_requested = False
+        accepting = True
+
+        def notification_handler(
+            _sender: BleakGATTCharacteristic | int | str, data: bytearray
+        ) -> None:
+            if not accepting or self._closed:
+                return
+            try:
+                readings = decoder.feed(data)
+            except Exception as exc:
+                self._report_error(exc)
+                return
+            for reading in readings:
+                try:
+                    self._on_update(reading)
+                except Exception as exc:
+                    self._report_error(exc)
+
+        try:
+            client = await connection.connect(
+                device,
+                max_attempts=owner._max_attempts,
+                disconnected_callback=lambda _client: disconnected.set(),
+            )
+            # The connector reuses its callback while retrying. Disconnects from
+            # failed attempts must not end the successfully established session.
+            disconnected.clear()
+            notify_requested = True
+            await client.start_notify(owner._notify_char_uuid, notification_handler)
+            while (
+                not self._closed and client.is_connected and not disconnected.is_set()
+            ):
+                try:
+                    await asyncio.wait_for(disconnected.wait(), 5.0)
+                except TimeoutError:
+                    pass
+            if not self._closed:
+                raise BleakError(f"Smart Shunt {device.address} disconnected")
+        finally:
+            accepting = False
+            decoder.reset_buffer()
+            if (client := connection.client) is not None:
+                self._cleanup_task = asyncio.create_task(
+                    self._cleanup(client, notify_requested=notify_requested)
+                )
+                await asyncio.shield(self._cleanup_task)
+                self._cleanup_task = None
+
+    async def _cleanup(self, client: BleakClient, *, notify_requested: bool) -> None:
+        """Report cleanup errors even when the run task was cancelled again."""
+        error = await _disconnect_client(
+            client,
+            self._owner._notify_char_uuid if notify_requested else None,
+            self._owner._disconnect_timeout,
+        )
+        if error is not None:
+            self._report_error(error)

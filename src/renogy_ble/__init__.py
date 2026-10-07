@@ -48,6 +48,8 @@ from renogy_ble.shunt import (
     KEY_SHUNT_SOC,
     KEY_SHUNT_VOLTAGE,
     ShuntBleClient,
+    ShuntNotificationDecoder,
+    ShuntSubscription,
     parse_shunt_payload,
 )
 
@@ -95,4 +97,6 @@ __all__ = [
     "KEY_SHUNT_ENERGY_DISCHARGED_TOTAL",
     "parse_shunt_payload",
     "ShuntBleClient",
+    "ShuntNotificationDecoder",
+    "ShuntSubscription",
 ]
