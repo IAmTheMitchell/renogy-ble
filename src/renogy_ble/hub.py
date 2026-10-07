@@ -87,7 +87,12 @@ class RenogyCommunicationHub:
         rediscover: bool = False,
         include_cell_status: bool = False,
     ) -> RenogyHubBatteryReadResult:
-        """Discover or poll Communication Hub batteries using one BLE session."""
+        """Discover or poll Communication Hub batteries using one BLE session.
+
+        Set include_cell_status to read optional cell telemetry after a successful
+        pack poll. Cell timeouts leave pack telemetry intact and omit cell fields
+        for the affected battery. The default adds no cell-status traffic.
+        """
         session = await self._client._prepare_session(device)
         batteries: list[RenogyHubBattery] = []
         error: Exception | None = None
@@ -293,6 +298,14 @@ class RenogyCommunicationHub:
                     "Unable to reconnect after Hub cell-status timeout on %s: %s",
                     device.name,
                     exc,
+                )
+                # Notification setup may fail after a connection was established.
+                # Discard the incomplete session while preserving pack telemetry.
+                await self._client._close_session(
+                    device.address,
+                    device.name,
+                    session,
+                    remove=True,
                 )
                 break
 
