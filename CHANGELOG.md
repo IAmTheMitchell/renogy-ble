@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## [2.9.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.8.0...v2.9.0) (2026-10-07)
+
+
+### Features
+
+* add buffered Shunt300 notification subscriptions ([#172](https://github.com/IAmTheMitchell/renogy-ble/issues/172)) ([1bacaa1](https://github.com/IAmTheMitchell/renogy-ble/commit/1bacaa17420ae865d1610d3c3340c6503a426572))
+* read Communication Hub battery cell telemetry ([#181](https://github.com/IAmTheMitchell/renogy-ble/issues/181)) ([33888e0](https://github.com/IAmTheMitchell/renogy-ble/commit/33888e0b39b3f05a2b17c311fb13c84465207f23))
+
+
+### Bug Fixes
+
+* recover stale persistent-session GATT cache ([#180](https://github.com/IAmTheMitchell/renogy-ble/issues/180)) ([887cfdf](https://github.com/IAmTheMitchell/renogy-ble/commit/887cfdff7ca0f938bd48cf45527032e6a8b5a4be))
+
 ## [2.8.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.7.0...v2.8.0) (2026-09-15)
 
 
