@@ -191,6 +191,13 @@ device = RenogyBLEDevice(ble_device, device_type="shunt300")
 result = await client.read_device(device)
 ```
 
+### Device Settings
+
+The semantic settings API accepts battery types, native currents and voltages,
+and boolean load states. The library owns profile support, encoding, addressing,
+and acknowledgement validation. See the [device settings guide](docs/device-settings.md)
+for the public contract, supported controls, and pending-release status.
+
 ### Custom Commands or Device IDs
 
 You can supply your own Modbus command set or device ID if needed.

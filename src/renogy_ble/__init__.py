@@ -40,6 +40,7 @@ from renogy_ble.hub import (
     RenogyHubBatteryReadResult,
 )
 from renogy_ble.renogy_parser import RenogyParser
+from renogy_ble.settings import DeviceSetting, SettingValue, get_device_settings
 from renogy_ble.shunt import (
     KEY_SHUNT_CURRENT,
     KEY_SHUNT_ENERGY_CHARGED_TOTAL,
@@ -62,6 +63,9 @@ logging.basicConfig(
 
 
 __all__ = [
+    "DeviceSetting",
+    "SettingValue",
+    "get_device_settings",
     "COMMANDS",
     "BATTERY_DEVICE_TYPE",
     "BATTERY_VARIANT_LEGACY",
