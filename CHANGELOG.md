@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.10.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.9.0...v2.10.0) (2026-10-08)
+
+
+### Features
+
+* add semantic device settings API ([#185](https://github.com/IAmTheMitchell/renogy-ble/issues/185)) ([d11744e](https://github.com/IAmTheMitchell/renogy-ble/commit/d11744ee752ce440ce77782d29ead95867d22a0c))
+
 ## [2.9.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.8.0...v2.9.0) (2026-10-07)
 
 
