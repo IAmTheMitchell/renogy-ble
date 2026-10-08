@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
 from time import monotonic
 from typing import Any, Literal, Optional
 
@@ -39,6 +40,7 @@ from renogy_ble.battery import (
     parse_battery_pack_status,
 )
 from renogy_ble.renogy_parser import RenogyParser
+from renogy_ble.settings import SettingValue, _inverter_setting, _setting_specs
 
 logger = logging.getLogger(__name__)
 
@@ -523,7 +525,7 @@ class RenogyBleClient:
         self,
         *,
         scanner: Any | None = None,
-        device_id: int = DEFAULT_DEVICE_ID,
+        device_id: int | None = None,
         commands: dict[str, dict[str, tuple[int, int, int]]] | None = None,
         read_char_uuid: str = RENOGY_READ_CHAR_UUID,
         write_char_uuid: str = RENOGY_WRITE_CHAR_UUID,
@@ -536,7 +538,8 @@ class RenogyBleClient:
             raise ValueError(f"Unsupported transport mode: {transport_mode}")
 
         self._scanner = scanner
-        self._device_id = device_id
+        self._explicit_device_id = device_id
+        self._device_id = DEFAULT_DEVICE_ID if device_id is None else device_id
         self._commands = commands or COMMANDS
         self._read_char_uuid = read_char_uuid
         self._write_char_uuid = write_char_uuid
@@ -980,7 +983,7 @@ class RenogyBleClient:
                 _InverterReadSpec(4327, 7, "_parse_inverter_charging_response"),
                 _InverterReadSpec(4408, 6, "_parse_riv4835csh1s_load_response"),
                 _InverterReadSpec(
-                    0xE205,
+                    _inverter_setting("inverter_ac_charge_current").register,
                     1,
                     "_parse_riv4835csh1s_ac_charge_current",
                 ),
@@ -1002,10 +1005,26 @@ class RenogyBleClient:
                 "_parse_inverter_model_response",
                 cache_key="model",
             ),
-            _InverterReadSpec(4456, 1, "_parse_inverter_ac_input_current_limit"),
-            _InverterReadSpec(4422, 1, "_parse_inverter_charge_current"),
-            _InverterReadSpec(4430, 1, "_parse_inverter_low_voltage_warn"),
-            _InverterReadSpec(4452, 1, "_parse_inverter_over_voltage"),
+            _InverterReadSpec(
+                _inverter_setting("inverter_ac_input_current_limit").register,
+                1,
+                "_parse_inverter_ac_input_current_limit",
+            ),
+            _InverterReadSpec(
+                _inverter_setting("inverter_charge_current").register,
+                1,
+                "_parse_inverter_charge_current",
+            ),
+            _InverterReadSpec(
+                _inverter_setting("inverter_low_voltage_warn").register,
+                1,
+                "_parse_inverter_low_voltage_warn",
+            ),
+            _InverterReadSpec(
+                _inverter_setting("inverter_over_voltage").register,
+                1,
+                "_parse_inverter_over_voltage",
+            ),
         )
 
     async def _read_inverter_device(
@@ -1312,7 +1331,12 @@ class RenogyBleClient:
         if len(data) < 5:
             logger.warning("Inverter setpoint response too short: %d bytes", len(data))
             return {}
-        return {key: int.from_bytes(data[3:5], "big") * 0.1}
+        return {
+            key: float(
+                Decimal(int.from_bytes(data[3:5], "big"))
+                * _inverter_setting(key).quantum
+            )
+        }
 
     @staticmethod
     def _parse_inverter_ac_input_current_limit(data: bytes) -> dict[str, Any]:
@@ -1333,6 +1357,41 @@ class RenogyBleClient:
     @staticmethod
     def _parse_inverter_over_voltage(data: bytes) -> dict[str, Any]:
         return RenogyBleClient._parse_inverter_setpoint(data, "inverter_over_voltage")
+
+    def _write_device_id(self, device: RenogyBLEDevice) -> int:
+        """Honor explicit addressing; otherwise select the device default."""
+        if self._explicit_device_id is not None:
+            return self._explicit_device_id
+        return (
+            INVERTER_DEVICE_ID
+            if device.device_type == "inverter"
+            else DEFAULT_DEVICE_ID
+        )
+
+    async def write_setting(
+        self, device: RenogyBLEDevice, key: str, value: SettingValue
+    ) -> RenogyBleWriteResult:
+        """Write a semantic native value and validate the FC06 acknowledgement.
+
+        Invalid/unsupported values fail before connecting. Success confirms the
+        echoed register/value and CRC, not persistence; the next poll provides
+        authoritative readback. Transport failures retain their original error.
+        """
+        specs = _setting_specs(
+            device.device_type,
+            model_hint=device.model_hint,
+            advertisement_name=device.advertised_name,
+        )
+        spec = next((spec for spec in specs if spec.capability.key == key), None)
+        if spec is None:
+            return RenogyBleWriteResult(
+                False, ValueError(f"Unsupported setting: {key}")
+            )
+        try:
+            wire_value = spec.encode(value)
+        except ValueError as exc:
+            return RenogyBleWriteResult(False, exc)
+        return await self.write_single_register(device, spec.register, wire_value)
 
     async def write_single_register(
         self,
@@ -1364,7 +1423,10 @@ class RenogyBleClient:
             self._reset_notifications(session)
             write_target = session.write_target or self._write_char_uuid
             modbus_request = create_modbus_write_request(
-                self._device_id, register, value, function_code=function_code
+                self._write_device_id(device),
+                register,
+                value,
+                function_code=function_code,
             )
             logger.debug(
                 "Sending write register command: %s",
@@ -1857,7 +1919,7 @@ class RenogyBleClient:
 
             if (
                 len(session.notification_data) >= exception_len
-                and session.notification_data[0] == self._device_id
+                and session.notification_data[0] == request[0]
                 and session.notification_data[1] == exception_code_mask
             ):
                 exception_response = bytes(session.notification_data[:exception_len])
