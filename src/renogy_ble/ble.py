@@ -1151,6 +1151,22 @@ class RenogyBleClient:
                 any_command_succeeded, dict(device.parsed_data), error
             )
 
+    async def read_inverter_diagnostics(
+        self,
+        device: RenogyBLEDevice,
+        *,
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read opt-in RIV LCD diagnostics without altering normal measurements.
+
+        Call after a successful normal poll. Pass the previous snapshot's
+        ``riv_diagnostics`` metadata to preserve timestamped slow/static reads;
+        omitting it starts a new bounded first pass. This API performs no writes.
+        """
+        from .inverter_diagnostics import async_read_inverter_diagnostics
+
+        return await async_read_inverter_diagnostics(self, device, previous=previous)
+
     async def _read_modbus_register(
         self,
         session: _PersistentBleSession,
