@@ -55,6 +55,10 @@ from renogy_ble.identification import (
     is_address_placeholder,
     name_matches_device_type,
 )
+from renogy_ble.inverter_diagnostics import (
+    InverterDiagnosticField,
+    get_inverter_diagnostic_fields,
+)
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.settings import DeviceSetting, SettingValue, get_device_settings
 from renogy_ble.shunt import (
@@ -79,6 +83,8 @@ logging.basicConfig(
 
 
 __all__ = [
+    "InverterDiagnosticField",
+    "get_inverter_diagnostic_fields",
     "AdvertisementIdentity",
     "DeviceType",
     "identify_advertisement",
