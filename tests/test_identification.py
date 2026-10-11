@@ -210,3 +210,25 @@ def test_address_shape_alone_does_not_reject_a_name():
 def test_missing_packet_has_no_guess_or_state():
     assert identify_advertisement(None, manufacturer_data={0xE14C: b""}).supported
     assert not identify_advertisement(None, manufacturer_data={}).supported
+
+
+@pytest.mark.parametrize(
+    "name,identified_type",
+    [
+        ("BT-TH-BATT01", DeviceType.BATTERY),
+        (" BT-TH-battery01 ", DeviceType.BATTERY),
+        ("RNGRBP123", DeviceType.BATTERY),
+        ("RNGC123", DeviceType.BATTERY),
+        ("RNGPRO123", DeviceType.BATTERY),
+        ("RNGRIU123", DeviceType.INVERTER),
+        ("BTRIC123", DeviceType.INVERTER),
+        ("RTMShunt300123", DeviceType.SHUNT300),
+    ],
+)
+@pytest.mark.parametrize("selected_type", list(DeviceType))
+def test_identified_names_match_only_their_protocol(
+    name, identified_type, selected_type
+):
+    assert name_matches_device_type(name, selected_type.value) == (
+        selected_type is identified_type
+    )

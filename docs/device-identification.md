@@ -52,7 +52,12 @@ confirmed advertisements when later packets omit names or manufacturer data.
 and `shunt300`. `name_matches_device_type` and
 `expected_prefixes_for_device_type` check compatibility with a selected protocol;
 a generic BT-TH name remains compatible with a manually selected battery,
-controller, or DCC. It does not establish which hardware is attached.
+controller, or DCC. A name with an explicit legacy battery marker matches only
+the battery protocol, just as other identified names match only their family.
+`expected_prefixes_for_device_type` provides broad family prefixes; it cannot
+distinguish generic BT-TH names from identified legacy batteries. Use
+`name_matches_device_type` for compatibility decisions. A generic name does not
+establish which hardware is attached.
 
 `detect_device_type_from_model` retains the established DCC/RBC DC-input model
 recognition and returns `None` for other models. It is a hint for applications,

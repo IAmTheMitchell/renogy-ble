@@ -139,9 +139,13 @@ def name_matches_device_type(
 
     Generic BT-TH names remain compatible with a selected legacy battery,
     controller, or DCC protocol. This is not proof of the attached hardware.
+    Identified names match only their specific device type.
     Manufacturer-only evidence does not establish a compatible name.
     """
     name = _usable_name(name, address)
+    identity = identify_advertisement(name)
+    if identity.device_type is not None:
+        return identity.device_type.value == device_type
     return bool(name) and name.startswith(
         expected_prefixes_for_device_type(device_type)
     )
