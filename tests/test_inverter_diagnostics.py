@@ -324,3 +324,52 @@ def test_invalid_firmware_text_has_no_display_value(wire, words):
     result = asyncio.run(complete_pass(RenogyBleClient(), device()))
     assert "riv_research_word_10df" not in result
     assert result["riv_diagnostic_read_status"] == "partial"
+
+
+def test_partial_sentinel_reports_partial_after_first_pass(wire):
+    wire.words[4437] = 0xFFFF
+    result = asyncio.run(complete_pass(RenogyBleClient(), device()))
+    assert result["riv_diagnostic_read_status"] == "partial"
+    assert "riv_program_04" not in result
+    assert result["riv_program_05"] == 53.6
+
+
+@pytest.mark.parametrize("response", [None, frame([0, 0xFFFF, 0, 0])])
+def test_unavailable_fault_summaries_retain_failure_evidence(wire, response):
+    wire.overrides[4398] = response
+    result = asyncio.run(RenogyBleClient().read_inverter_diagnostics(device()))
+    fields = result["riv_diagnostics"]["fields"]
+    for key in ("riv_fault_count", "riv_active_faults", "riv_fault_decode_status"):
+        assert key not in result
+        assert fields[key]["read_status"] == (
+            "read_error" if response is None else "unsupported"
+        )
+        assert fields[key]["read_response"] is not None
+        if response is None:
+            assert fields[key]["read_error"]
+
+
+@pytest.mark.parametrize("interval", [900, 901])
+def test_slow_refresh_is_fair_at_long_poll_intervals(interval):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    cache = {
+        str(register): {
+            "read_status": "read_error"
+            if (register, count) in diagnostics.FIRMWARE_BLOCKS
+            else "read",
+            "next_read_at": now.isoformat(),
+        }
+        for register, count in diagnostics.SLOW_BLOCKS
+    }
+    selected = []
+    for _ in diagnostics.SLOW_BLOCKS:
+        block = diagnostics._next_slow_block(cache, now)
+        assert block is not None
+        selected.append(block)
+        cache[str(block[0])]["next_read_at"] = (
+            now + timedelta(seconds=900)
+        ).isoformat()
+        now += timedelta(seconds=interval)
+    assert selected == list(diagnostics.SLOW_BLOCKS)

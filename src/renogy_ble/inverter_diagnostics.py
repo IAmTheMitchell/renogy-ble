@@ -298,6 +298,7 @@ def _next_slow_block(
     for block in SLOW_BLOCKS:
         if str(block[0]) not in cache:
             return block
+    due_blocks = []
     for block in SLOW_BLOCKS:
         evidence = cache[str(block[0])]
         if evidence["read_status"] == "unsupported":
@@ -305,9 +306,11 @@ def _next_slow_block(
         if block in FIRMWARE_BLOCKS and evidence["read_status"] == "read":
             continue
         due = evidence.get("next_read_at")
-        if due is None or datetime.fromisoformat(due) <= now:
-            return block
-    return None
+        due_at = datetime.fromisoformat(due) if due is not None else now
+        if due_at <= now:
+            due_blocks.append((due_at, block))
+    # Refresh the oldest due block so long polling intervals cannot starve peers.
+    return min(due_blocks, key=lambda item: item[0])[1] if due_blocks else None
 
 
 def _field_evidence(
@@ -409,12 +412,23 @@ def _snapshot(cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
             if not any(known)
             else "mixed"
         )
-        for key in ("riv_fault_count", "riv_active_faults", "riv_fault_decode_status"):
-            fields[key] = {
-                **_field_evidence(4398, cache.get("4398")),
-                "fault_slots": slots,
-                "description_source": "RIV4835CSH1S LCD manual",
-            }
+    summary_details = _field_evidence(4398, cache.get("4398"))
+    if len(slots) != 4:
+        # A summary requires every slot, including individually unsupported words.
+        failed_slot = next(
+            fields[f"riv_fault_code_{slot}"]
+            for slot in range(1, 5)
+            if fields[f"riv_fault_code_{slot}"]["read_status"] != "read"
+        )
+        summary_details.update(
+            read_status=failed_slot["read_status"], raw_value=None, raw_hex=None
+        )
+    for key in ("riv_fault_count", "riv_active_faults", "riv_fault_decode_status"):
+        fields[key] = {
+            **summary_details,
+            "fault_slots": slots,
+            "description_source": "RIV4835CSH1S LCD manual",
+        }
     raw, evidence, index = words.get(4393, (None, None, 0))
     details = _field_evidence(4393, evidence, index=index)
     details["mapping_status"] = "warning_definitions_unverified_for_model"
@@ -464,7 +478,9 @@ def _snapshot(cache: dict[str, dict[str, Any]]) -> dict[str, Any]:
         if text is not None:
             values["riv_research_word_10df"] = text
     pending = any(str(register) not in cache for register, _ in SLOW_BLOCKS)
-    failed = any(item.get("read_status") != "read" for item in cache.values())
+    failed = any(item.get("read_status") != "read" for item in cache.values()) or any(
+        field["read_status"] != "read" for field in fields.values()
+    )
     values["riv_diagnostic_read_status"] = (
         "pending" if pending else "partial" if failed else "complete"
     )

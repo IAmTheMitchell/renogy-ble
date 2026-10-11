@@ -98,7 +98,8 @@ and one attempt. The first nine successful ordinary polls complete the extra
 read pass. Diagnostics add request/connection time and are intended for opt-in
 monitoring rather than enforcing an AC circuit limit.
 
-Native settings refresh at most every 900 seconds; successful firmware reads
+Native settings refresh at most every 900 seconds, with the oldest due block
+selected first to prevent starvation at longer polling intervals; successful firmware reads
 are cached until the consumer resets `previous`. Unsupported blocks (validated
 exception 02 or all-FFFF words) are not retried until that reset. Individual
 FFFF settings are unavailable. Failures clear the attempted block's previous
@@ -109,6 +110,8 @@ cached setting. Failed sessions are dropped to prevent late reply reuse.
 attempt times, cache flags, and bounded response evidence. `pending` means the
 extra pass is incomplete, `partial` means at least one block failed or was
 unsupported, and `complete` means every planned block was read successfully.
+An individually unsupported word also makes a completed pass `partial`. Fault
+summary fields retain failure evidence when any required fault slot is unavailable.
 This status describes reads, not complete model interpretation or warning
 validation. Consumers should expose missing values as unavailable while
 retaining their failure evidence.
