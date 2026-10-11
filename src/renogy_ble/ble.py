@@ -39,6 +39,7 @@ from renogy_ble.battery import (
     parse_battery_mosfet_status,
     parse_battery_pack_status,
 )
+from renogy_ble.identification import RIV4835CSH1S_MODEL as RIV4835CSH1S_MODEL
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.settings import SettingValue, _inverter_setting, _setting_specs
 
@@ -59,7 +60,6 @@ MAX_NOTIFICATION_WAIT_TIME = 2.0
 # Default device ID for Renogy devices
 DEFAULT_DEVICE_ID = 0xFF
 INVERTER_DEVICE_ID = 0x20
-RIV4835CSH1S_MODEL = "RIV4835CSH1S"
 
 # Default device type
 DEFAULT_DEVICE_TYPE = "controller"
@@ -297,6 +297,7 @@ class RenogyBLEDevice:
             detect_battery_variant(
                 self.advertised_name,
                 manufacturer_data=self.manufacturer_data,
+                address=self.address,
             )
             if device_type == BATTERY_DEVICE_TYPE
             else None
@@ -815,11 +816,19 @@ class RenogyBleClient:
         """Read data from a supported Renogy battery."""
         session = await self._prepare_session(device)
         cached_data = dict(device.parsed_data)
-        variant = device.battery_variant or detect_battery_variant(
-            device.name,
-            manufacturer_data=device.manufacturer_data,
+        # A later local name can refine manufacturer-only Pro identification.
+        # Hardware display names do not establish advertisement protocol units.
+        variant = (
+            detect_battery_variant(
+                device.advertised_name,
+                manufacturer_data=device.manufacturer_data,
+                address=device.address,
+            )
+            or device.battery_variant
         )
-        if variant is None and device.name.startswith(BATTERY_LEGACY_NAME_PREFIX):
+        if variant is None and device.advertised_name.startswith(
+            BATTERY_LEGACY_NAME_PREFIX
+        ):
             logger.debug(
                 "Falling back to legacy battery protocol for manually configured "
                 "BT-TH device %s",

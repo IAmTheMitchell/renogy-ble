@@ -39,6 +39,22 @@ from renogy_ble.hub import (
     RenogyHubBattery,
     RenogyHubBatteryReadResult,
 )
+from renogy_ble.identification import (
+    BATTERY_PRO_MANUFACTURER_ID,
+    RENOGY_BATTERY_PRO_PREFIXES,
+    RENOGY_BT_PREFIX,
+    RENOGY_INVERTER_PREFIX,
+    RENOGY_REGO_INVERTER_PREFIX,
+    SHUNT300_BT_PREFIX,
+    SUPPORTED_BLE_NAME_PREFIXES,
+    AdvertisementIdentity,
+    DeviceType,
+    detect_device_type_from_model,
+    expected_prefixes_for_device_type,
+    identify_advertisement,
+    is_address_placeholder,
+    name_matches_device_type,
+)
 from renogy_ble.renogy_parser import RenogyParser
 from renogy_ble.settings import DeviceSetting, SettingValue, get_device_settings
 from renogy_ble.shunt import (
@@ -63,6 +79,20 @@ logging.basicConfig(
 
 
 __all__ = [
+    "AdvertisementIdentity",
+    "DeviceType",
+    "identify_advertisement",
+    "detect_device_type_from_model",
+    "is_address_placeholder",
+    "name_matches_device_type",
+    "expected_prefixes_for_device_type",
+    "SUPPORTED_BLE_NAME_PREFIXES",
+    "BATTERY_PRO_MANUFACTURER_ID",
+    "RENOGY_BT_PREFIX",
+    "RENOGY_INVERTER_PREFIX",
+    "RENOGY_REGO_INVERTER_PREFIX",
+    "RENOGY_BATTERY_PRO_PREFIXES",
+    "SHUNT300_BT_PREFIX",
     "DeviceSetting",
     "SettingValue",
     "get_device_settings",
