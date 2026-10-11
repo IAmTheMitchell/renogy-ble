@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## [2.11.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.10.0...v2.11.0) (2026-10-11)
+
+
+### Features
+
+* add opt-in RIV LCD and raw diagnostics ([#187](https://github.com/IAmTheMitchell/renogy-ble/issues/187)) ([9978e67](https://github.com/IAmTheMitchell/renogy-ble/commit/9978e67ecb45b2ad90727b12dd1a46b941c8ed57))
+* centralize advertisement and model identification ([#188](https://github.com/IAmTheMitchell/renogy-ble/issues/188)) ([b4d90d9](https://github.com/IAmTheMitchell/renogy-ble/commit/b4d90d9f9b677cace2ffa36c7f770aa3522745f0))
+
 ## [2.10.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.9.0...v2.10.0) (2026-10-08)
 
 
