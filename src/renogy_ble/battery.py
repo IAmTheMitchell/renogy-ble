@@ -5,22 +5,45 @@ from __future__ import annotations
 from functools import cache
 from typing import Any, Literal
 
-BATTERY_DEVICE_TYPE = "battery"
-BATTERY_VARIANT_LEGACY = "legacy"
-BATTERY_VARIANT_PRO = "pro"
-# RNGPRO-family batteries (e.g. RBT12500LFP-SHBT) share the Pro register map and
-# device id but use 0.01 A current units rather than the Pro variant's 0.1 A.
-# Their 0.1 V cell units match RNGRBP; RNGC scaling remains unconfirmed.
-BATTERY_VARIANT_RNGPRO = "rngpro"
-BatteryVariant = Literal["legacy", "pro", "rngpro"]
-BatteryCellVoltageDivisor = Literal[10, 1000]
+from .identification import (
+    BATTERY_DEVICE_TYPE as BATTERY_DEVICE_TYPE,
+)
+from .identification import (
+    BATTERY_LEGACY_NAME_MARKERS as BATTERY_LEGACY_NAME_MARKERS,
+)
+from .identification import (
+    BATTERY_LEGACY_NAME_PREFIX as BATTERY_LEGACY_NAME_PREFIX,
+)
+from .identification import (
+    BATTERY_PRO_MANUFACTURER_ID as BATTERY_PRO_MANUFACTURER_ID,
+)
+from .identification import (
+    BATTERY_PRO_NAME_PREFIXES as BATTERY_PRO_NAME_PREFIXES,
+)
+from .identification import (
+    BATTERY_RNGC_NAME_PREFIX,
+    identify_advertisement,
+)
+from .identification import (
+    BATTERY_RNGPRO_NAME_PREFIXES as BATTERY_RNGPRO_NAME_PREFIXES,
+)
+from .identification import (
+    BATTERY_RNGRBP_NAME_PREFIX as BATTERY_RNGRBP_NAME_PREFIX,
+)
+from .identification import (
+    BATTERY_VARIANT_LEGACY as BATTERY_VARIANT_LEGACY,
+)
+from .identification import (
+    BATTERY_VARIANT_PRO as BATTERY_VARIANT_PRO,
+)
+from .identification import (
+    BATTERY_VARIANT_RNGPRO as BATTERY_VARIANT_RNGPRO,
+)
+from .identification import (
+    BatteryVariant as BatteryVariant,
+)
 
-BATTERY_RNGRBP_NAME_PREFIX = "RNGRBP"
-BATTERY_PRO_NAME_PREFIXES = (BATTERY_RNGRBP_NAME_PREFIX, "RNGC")
-BATTERY_RNGPRO_NAME_PREFIXES = ("RNGPRO",)
-BATTERY_LEGACY_NAME_PREFIX = "BT-TH-"
-BATTERY_LEGACY_NAME_MARKERS = ("BATT", "BATTERY")
-BATTERY_PRO_MANUFACTURER_ID = 0xE14C
+BatteryCellVoltageDivisor = Literal[10, 1000]
 
 BATTERY_PROTOCOL_DEVICE_IDS: dict[BatteryVariant, int] = {
     BATTERY_VARIANT_LEGACY: 0x30,
@@ -64,7 +87,9 @@ def battery_cell_voltage_divisor(
     """Return a confirmed cell-voltage divisor, if the family identifies one."""
     if variant == BATTERY_VARIANT_RNGPRO or is_rngr_bp_battery_name(name):
         return 10
-    if variant != BATTERY_VARIANT_PRO or (name or "").strip().startswith("RNGC"):
+    if variant != BATTERY_VARIANT_PRO or (name or "").strip().startswith(
+        BATTERY_RNGC_NAME_PREFIX
+    ):
         return 1000
     return None
 
@@ -73,42 +98,27 @@ def detect_battery_variant(
     name: str | None,
     *,
     manufacturer_data: dict[int, bytes] | None = None,
+    address: str | None = None,
 ) -> BatteryVariant | None:
     """Return the supported battery protocol variant for the given advertisement."""
-    cleaned_name = (name or "").strip()
-    manufacturer_data = manufacturer_data or {}
-
-    if cleaned_name.startswith(BATTERY_RNGPRO_NAME_PREFIXES):
-        return BATTERY_VARIANT_RNGPRO
-
-    if cleaned_name.startswith(BATTERY_PRO_NAME_PREFIXES):
-        return BATTERY_VARIANT_PRO
-
-    if BATTERY_PRO_MANUFACTURER_ID in manufacturer_data:
-        return BATTERY_VARIANT_PRO
-
-    if _is_legacy_battery_name(cleaned_name):
-        return BATTERY_VARIANT_LEGACY
-
-    return None
+    return identify_advertisement(
+        name, manufacturer_data=manufacturer_data, address=address
+    ).battery_variant
 
 
 def is_supported_battery_name(
     name: str | None,
     *,
     manufacturer_data: dict[int, bytes] | None = None,
+    address: str | None = None,
 ) -> bool:
     """Return True when an advertisement matches a supported battery family."""
-    return detect_battery_variant(name, manufacturer_data=manufacturer_data) is not None
-
-
-def _is_legacy_battery_name(name: str) -> bool:
-    """Return True only for legacy battery advertisements, not shared BT-TH devices."""
-    if not name.startswith(BATTERY_LEGACY_NAME_PREFIX):
-        return False
-
-    suffix = name[len(BATTERY_LEGACY_NAME_PREFIX) :].upper()
-    return any(marker in suffix for marker in BATTERY_LEGACY_NAME_MARKERS)
+    return (
+        detect_battery_variant(
+            name, manufacturer_data=manufacturer_data, address=address
+        )
+        is not None
+    )
 
 
 @cache
