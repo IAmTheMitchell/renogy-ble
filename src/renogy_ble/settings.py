@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
+from .identification import RENOGY_REGO_INVERTER_PREFIX, RIV4835CSH1S_MODEL
 from .register_map import REGISTER_MAP
 
 SettingValue = str | float | int | bool
@@ -154,9 +155,11 @@ def _setting_specs(
     if device_type == "controller":
         return _CONTROLLER_SPECS
     if device_type == "inverter":
-        if model_hint == "RIV4835CSH1S":
+        if model_hint == RIV4835CSH1S_MODEL:
             return _INVERTER_SPECS[-1:]
-        if model_hint is None and advertisement_name.startswith("BTRIC"):
+        if model_hint is None and advertisement_name.startswith(
+            RENOGY_REGO_INVERTER_PREFIX
+        ):
             return _INVERTER_SPECS[:-1]
     return ()
 
