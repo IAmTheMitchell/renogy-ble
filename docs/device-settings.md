@@ -35,7 +35,7 @@ The allowlists migrate the controls previously exposed by renogy-ha; readable
 registers do not automatically become writable. No battery, Shunt or
 Communication Hub settings are exposed. Unknown inverter profiles have no
 settings. REGO retains its established `BTRIC` advertisement-name gate with no
-model hint. `model_hint="RIV4835CSH1S"` selects only the RIV control, irrespective
+model hint. `model_hint="RIV4835CSH1S"` selects the RIV controls, irrespective
 of its Bluetooth module's advertised name.
 
 | Profile | Key | Native values |
@@ -56,13 +56,17 @@ of its Bluetooth module's advertised name.
 | REGO | `inverter_low_voltage_warn` | 9–15.5 V, 0.1 V steps |
 | REGO | `inverter_over_voltage` | 9–16 V, 0.1 V steps |
 | RIV4835CSH1S | `inverter_ac_charge_current` | 0–40 A, 5 A steps |
+| RIV4835CSH1S | `output_priority` | `SOL`, `UTI`, `SBU` |
 
 Bounds preserve existing conservative integration limits. They are not newly
 verified hardware limits for every model. Solar cutoff preserves the existing
 centiamp precision; HA can still present its existing 1 A input step. DCC/controller
 register offsets, scaling and enum codes come from the existing read parser's
 fields. In particular, the library encodes `custom` as 0 on DCC and 5 on controllers.
-Inverter reads and writes share their setpoint register and precision definitions.
+Inverter reads and writes share their setting definitions. RIV4835CSH1S Program
+01 output priority is hardware-validated at register `0x1159`, with raw values
+`0=SOL`, `1=UTI`, and `2=SBU`. Ordinary inverter polling provides authoritative
+readback after writes.
 
 ## Acknowledgement and addressing
 

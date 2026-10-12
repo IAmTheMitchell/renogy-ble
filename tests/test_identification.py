@@ -143,7 +143,10 @@ def test_settings_retain_explicit_profile_over_name():
     settings = get_device_settings(
         "inverter", model_hint="RIV4835CSH1S", advertisement_name="BTRIC123"
     )
-    assert [setting.key for setting in settings] == ["inverter_ac_charge_current"]
+    assert [setting.key for setting in settings] == [
+        "inverter_ac_charge_current",
+        "output_priority",
+    ]
     assert (
         get_device_settings(
             "inverter", model_hint="other", advertisement_name="BTRIC123"

@@ -29,6 +29,7 @@ def test_riv4835csh1s_read_profile() -> None:
         (4327, 7, "_parse_inverter_charging_response"),
         (4408, 6, "_parse_riv4835csh1s_load_response"),
         (0xE205, 1, "_parse_riv4835csh1s_ac_charge_current"),
+        (0x1159, 1, "_parse_riv4835csh1s_output_priority"),
     ]
     assert specs[0].retries == 2
     assert all(spec.register != 4311 for spec in specs)
@@ -117,6 +118,31 @@ def test_riv4835csh1s_program28_response(raw: int, amps: float) -> None:
     assert parsed["inverter_ac_charge_current"] == pytest.approx(amps)
 
 
+@pytest.mark.parametrize(
+    ("raw", "priority"),
+    [(0, "SOL"), (1, "UTI"), (2, "SBU")],
+)
+def test_riv4835csh1s_output_priority_response(
+    raw: int, priority: str
+) -> None:
+    """Parse hardware-validated Program 01 values from register 0x1159."""
+    parsed = RenogyBleClient._parse_riv4835csh1s_output_priority(
+        _modbus_read_response([raw])
+    )
+
+    assert parsed["output_priority"] == priority
+
+
+def test_riv4835csh1s_output_priority_rejects_unknown_value() -> None:
+    """Do not infer a Program 01 mode from an unknown raw value."""
+    assert (
+        RenogyBleClient._parse_riv4835csh1s_output_priority(
+            _modbus_read_response([3])
+        )
+        == {}
+    )
+
+
 def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
     """Read captured RIV frames without probing unsupported registers."""
 
@@ -144,6 +170,7 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
                 4327: bytes.fromhex("20030e003cfe1102690069028a000209e7e8e0"),
                 4408: bytes.fromhex("20030c000200140016000001710000a0f6"),
                 0xE205: _modbus_read_response([100]),
+                0x1159: _modbus_read_response([2]),
             }
             self._notify_handler(None, responses[register])
 
@@ -184,10 +211,12 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
     assert result.parsed_data["solar_voltage"] == pytest.approx(61.7)
     assert result.parsed_data["load_current"] == pytest.approx(0.2)
     assert result.parsed_data["inverter_ac_charge_current"] == pytest.approx(10.0)
+    assert result.parsed_data["output_priority"] == "SBU"
     assert [int.from_bytes(request[2:4], "big") for request in dummy_client.writes] == [
         4000,
         4109,
         4327,
         4408,
         0xE205,
+        0x1159,
     ]
