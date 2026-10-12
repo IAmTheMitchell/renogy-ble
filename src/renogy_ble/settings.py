@@ -1,4 +1,4 @@
-"""Semantic capabilities for the existing writable device settings.
+"""Semantic capabilities for supported writable device settings.
 
 The explicit allowlists preserve supported writes; a readable field alone never
 confers write support. Bounds inherited from the integration are conservative
@@ -113,9 +113,35 @@ _DCC_SPECS = tuple(
         *_DCC_NUMBERS,
     )
 )
+# Controllers share these native limits, but use their own parser field map.
+# DCC alternator controls do not confer write support on solar controllers.
+_CONTROLLER_NUMBER_KEYS = frozenset(
+    {
+        "overvoltage_threshold",
+        "charging_limit_voltage",
+        "equalization_voltage",
+        "boost_voltage",
+        "float_voltage",
+        "boost_return_voltage",
+        "overdischarge_return_voltage",
+        "undervoltage_warning",
+        "overdischarge_voltage",
+        "discharge_limit_voltage",
+        "overdischarge_delay",
+        "equalization_time",
+        "boost_time",
+        "equalization_interval",
+        "temperature_compensation",
+    }
+)
 _CONTROLLER_SPECS = (
     _mapped_spec("controller", _BATTERY_TYPE),
     _SettingSpec(DeviceSetting("load_enabled", "boolean"), 0x010A),
+    *(
+        _mapped_spec("controller", cap)
+        for cap in _DCC_NUMBERS
+        if cap.key in _CONTROLLER_NUMBER_KEYS
+    ),
 )
 # REGO and RIV setpoints are also used by the inverter read profile.
 _INVERTER_SPECS = (
