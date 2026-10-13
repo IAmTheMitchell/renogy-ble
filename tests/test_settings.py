@@ -167,10 +167,17 @@ def test_load_boolean(echo, state, wire):
         ("inverter_low_voltage_warn", 12.3, 0x114E, 123),
         ("inverter_over_voltage", 14.3, 0x1164, 143),
         ("inverter_ac_charge_current", 10, 0xE205, 100),
+        ("output_priority", "SOL", 0x1159, 0),
+        ("output_priority", "UTI", 0x1159, 1),
+        ("output_priority", "SBU", 0x1159, 2),
     ],
 )
 def test_inverter_serialized_write(echo, key, value, register, wire):
-    model = "RIV4835CSH1S" if key == "inverter_ac_charge_current" else None
+    model = (
+        "RIV4835CSH1S"
+        if key in {"inverter_ac_charge_current", "output_priority"}
+        else None
+    )
     target = device("inverter", "BTRIC-test", model)
     assert asyncio.run(RenogyBleClient().write_setting(target, key, value)).success
     assert echo.requests[-1][:6] == bytes([0x20, 6]) + register.to_bytes(
@@ -201,6 +208,7 @@ def test_low_level_inverter_default_and_explicit_addresses(echo, explicit):
         ("inverter", "BTRIC-test", "unknown", "inverter_charge_current", 10),
         ("inverter", "BTRIC-test", "RIV4835CSH1S", "inverter_charge_current", 10),
         ("inverter", "BTRIC-test", None, "inverter_ac_charge_current", 10),
+        ("inverter", "BTRIC-test", None, "output_priority", "SOL"),
     ],
 )
 def test_unsupported_profile_setting_has_no_transport(
@@ -237,6 +245,7 @@ def test_unsupported_profile_setting_has_no_transport(
         ("controller", "equalization_interval", 256, None),
         ("inverter", "inverter_ac_charge_current", 2.5, "RIV4835CSH1S"),
         ("inverter", "inverter_ac_charge_current", 45, "RIV4835CSH1S"),
+        ("inverter", "output_priority", "invalid", "RIV4835CSH1S"),
     ],
 )
 def test_invalid_native_value_has_no_transport(echo, kind, key, value, model):
@@ -277,6 +286,14 @@ def test_capabilities_are_explicit_and_have_no_wire_metadata():
         *(key for key, _, _, _ in CONTROLLER_WRITES),
     }
     assert not get_device_settings("inverter")
+    assert [
+        cap.key for cap in get_device_settings("inverter", model_hint="RIV4835CSH1S")
+    ] == ["inverter_ac_charge_current", "output_priority"]
+    assert next(
+        cap
+        for cap in get_device_settings("inverter", model_hint="RIV4835CSH1S")
+        if cap.key == "output_priority"
+    ).options == ("SOL", "UTI", "SBU")
     assert not get_device_settings("hub")
     for cap in get_device_settings("dcc"):
         assert not hasattr(cap, "register") and not hasattr(cap, "scale")

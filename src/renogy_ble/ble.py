@@ -996,6 +996,11 @@ class RenogyBleClient:
                     1,
                     "_parse_riv4835csh1s_ac_charge_current",
                 ),
+                _InverterReadSpec(
+                    _inverter_setting("output_priority").register,
+                    1,
+                    "_parse_riv4835csh1s_output_priority",
+                ),
             )
 
         return (
@@ -1115,6 +1120,9 @@ class RenogyBleClient:
                     parser = getattr(self, spec.parser_name)
                     parsed = parser(result_data)
                     if not parsed:
+                        if spec.parser_name == "_parse_riv4835csh1s_output_priority":
+                            # An unknown mode invalidates the previous known value.
+                            device.parsed_data.pop("output_priority", None)
                         logger.info(
                             "Failed to parse inverter register %s from device %s",
                             spec.register,
@@ -1362,6 +1370,27 @@ class RenogyBleClient:
                 * _inverter_setting(key).quantum
             )
         }
+
+    @staticmethod
+    def _parse_inverter_choice(data: bytes, key: str) -> dict[str, Any]:
+        """Decode a single-register inverter choice response."""
+        if len(data) < 5:
+            logger.warning("Inverter choice response too short: %d bytes", len(data))
+            return {}
+
+        raw = int.from_bytes(data[3:5], "big")
+        spec = _inverter_setting(key)
+        for code, option in spec.enum:
+            if raw == code:
+                return {key: option}
+
+        logger.warning("Unknown inverter %s value: %d", key, raw)
+        return {}
+
+    @staticmethod
+    def _parse_riv4835csh1s_output_priority(data: bytes) -> dict[str, Any]:
+        """Decode hardware-validated RIV4835CSH1S Program 01."""
+        return RenogyBleClient._parse_inverter_choice(data, "output_priority")
 
     @staticmethod
     def _parse_inverter_ac_input_current_limit(data: bytes) -> dict[str, Any]:

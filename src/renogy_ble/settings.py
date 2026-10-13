@@ -143,8 +143,8 @@ _CONTROLLER_SPECS = (
         if cap.key in _CONTROLLER_NUMBER_KEYS
     ),
 )
-# REGO and RIV setpoints are also used by the inverter read profile.
-_INVERTER_SPECS = (
+# REGO and RIV settings are also used by the inverter read profile.
+_REGO_INVERTER_SPECS = (
     _SettingSpec(
         DeviceSetting("inverter_ac_input_current_limit", "number", 1.0, 50.0, 1.0),
         4456,
@@ -165,12 +165,22 @@ _INVERTER_SPECS = (
         4452,
         Decimal("0.1"),
     ),
+)
+
+_RIV_INVERTER_SPECS = (
     _SettingSpec(
         DeviceSetting("inverter_ac_charge_current", "number", 0.0, 40.0, 5.0),
         57861,
         Decimal("0.1"),
     ),
+    _SettingSpec(
+        DeviceSetting("output_priority", "choice", options=("SOL", "UTI", "SBU")),
+        0x1159,
+        enum=((0, "SOL"), (1, "UTI"), (2, "SBU")),
+    ),
 )
+
+_INVERTER_SPECS = (*_REGO_INVERTER_SPECS, *_RIV_INVERTER_SPECS)
 
 
 def _setting_specs(
@@ -182,11 +192,11 @@ def _setting_specs(
         return _CONTROLLER_SPECS
     if device_type == "inverter":
         if model_hint == RIV4835CSH1S_MODEL:
-            return _INVERTER_SPECS[-1:]
+            return _RIV_INVERTER_SPECS
         if model_hint is None and advertisement_name.startswith(
             RENOGY_REGO_INVERTER_PREFIX
         ):
-            return _INVERTER_SPECS[:-1]
+            return _REGO_INVERTER_SPECS
     return ()
 
 
