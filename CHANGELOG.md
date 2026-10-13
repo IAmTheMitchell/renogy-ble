@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## [2.12.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.11.0...v2.12.0) (2026-10-13)
+
+
+### Features
+
+* add controller charging settings capabilities ([#191](https://github.com/IAmTheMitchell/renogy-ble/issues/191)) ([876bc64](https://github.com/IAmTheMitchell/renogy-ble/commit/876bc6491129fede1c66a11b034a35db0639f53d))
+* add RIV4835 Program 01 output priority ([#190](https://github.com/IAmTheMitchell/renogy-ble/issues/190)) ([941ccb0](https://github.com/IAmTheMitchell/renogy-ble/commit/941ccb008907bd192b05865cdce096ad1261f1d0))
+
 ## [2.11.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.10.0...v2.11.0) (2026-10-11)
 
 
