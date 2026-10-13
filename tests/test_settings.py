@@ -101,6 +101,36 @@ DCC_WRITES = [
 ]
 
 
+CONTROLLER_WRITES = [
+    ("overvoltage_threshold", 14.3, 0xE005, 143),
+    ("charging_limit_voltage", 14.4, 0xE006, 144),
+    ("equalization_voltage", 14.6, 0xE007, 146),
+    ("boost_voltage", 14.4, 0xE008, 144),
+    ("float_voltage", 13.8, 0xE009, 138),
+    ("boost_return_voltage", 13.2, 0xE00A, 132),
+    ("overdischarge_return_voltage", 12.6, 0xE00B, 126),
+    ("undervoltage_warning", 12.1, 0xE00C, 121),
+    ("overdischarge_voltage", 11.7, 0xE00D, 117),
+    ("discharge_limit_voltage", 10.5, 0xE00E, 105),
+    ("overdischarge_delay", 30, 0xE010, 30),
+    ("equalization_time", 120, 0xE011, 120),
+    ("boost_time", 120, 0xE012, 120),
+    ("equalization_interval", 30, 0xE013, 30),
+    ("temperature_compensation", 3, 0xE014, 3),
+]
+
+
+@pytest.mark.parametrize("key,value,register,wire", CONTROLLER_WRITES)
+def test_controller_serialized_write(echo, key, value, register, wire):
+    result = asyncio.run(
+        RenogyBleClient().write_setting(device("controller"), key, value)
+    )
+    expected = bytes([0xFF, 6]) + register.to_bytes(2, "big") + wire.to_bytes(2, "big")
+    assert result.success and result.error is None
+    assert echo.requests == [expected + bytes(modbus_crc(expected))]
+    assert not echo.is_connected
+
+
 @pytest.mark.parametrize("key,value,register,wire", DCC_WRITES)
 def test_dcc_serialized_write(echo, key, value, register, wire):
     result = asyncio.run(RenogyBleClient().write_setting(device("dcc"), key, value))
@@ -163,7 +193,8 @@ def test_low_level_inverter_default_and_explicit_addresses(echo, explicit):
         ("battery", "RBT-test", None, "battery_type", "custom"),
         ("shunt300", "SHUNT300", None, "load_enabled", True),
         ("hub", "HUB", None, "load_enabled", True),
-        ("controller", "BT-TH-test", None, "boost_voltage", 14.4),
+        ("controller", "BT-TH-test", None, "reverse_charging_voltage", 13.7),
+        ("controller", "BT-TH-test", None, "solar_cutoff_current", 7.53),
         ("controller", "BT-TH-test", None, "max_charging_current", 40),
         ("dcc", "BT-TH-test", None, "load_enabled", True),
         ("inverter", "RNGRIU-test", None, "inverter_charge_current", 10),
@@ -198,6 +229,12 @@ def test_unsupported_profile_setting_has_no_transport(
         ("dcc", "battery_type", 0, None),
         ("dcc", "battery_type", "invalid", None),
         ("controller", "load_enabled", 1, None),
+        ("controller", "float_voltage", 17.1, None),
+        ("controller", "float_voltage", 6.9, None),
+        ("controller", "float_voltage", 13.81, None),
+        ("controller", "float_voltage", float("nan"), None),
+        ("controller", "boost_time", 9, None),
+        ("controller", "equalization_interval", 256, None),
         ("inverter", "inverter_ac_charge_current", 2.5, "RIV4835CSH1S"),
         ("inverter", "inverter_ac_charge_current", 45, "RIV4835CSH1S"),
     ],
@@ -237,6 +274,7 @@ def test_capabilities_are_explicit_and_have_no_wire_metadata():
     assert {cap.key for cap in get_device_settings("controller")} == {
         "battery_type",
         "load_enabled",
+        *(key for key, _, _, _ in CONTROLLER_WRITES),
     }
     assert not get_device_settings("inverter")
     assert not get_device_settings("hub")

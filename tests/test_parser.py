@@ -402,7 +402,7 @@ def test_controller_parsing_register_57347(integration_parser, integration_test_
     parser, _ = integration_parser
     result = parser.parse(integration_test_data[57347], "controller", 57347)
 
-    assert result["system_voltage"] == 255  # 0xFF: auto-detect
+    assert result["system_voltage"] == "auto"  # 0xFF: auto-detect
     assert result["overvoltage_threshold"] == pytest.approx(16.0)
     assert result["charging_limit_voltage"] == pytest.approx(15.5)
     assert result["equalization_voltage"] == pytest.approx(14.6)
@@ -635,3 +635,13 @@ def test_dcc_standard_dynamic_data_has_no_status_fields():
         "ignition_status",
     ):
         assert absent not in parsed
+
+
+@pytest.mark.parametrize("voltage", [12, 24, 36, 48])
+def test_controller_nominal_system_voltage_remains_numeric(voltage):
+    """Only the controller auto-detect sentinel is normalized to a label."""
+    response = bytes([255, 3, 2, voltage, 100])
+    assert (
+        ControllerParser().parse(response, "controller", 0xE003)["system_voltage"]
+        == voltage
+    )

@@ -235,6 +235,7 @@ REGISTER_MAP: RegisterMap = {
             "length": 1,
             "byte_order": "big",
             "offset": 3,
+            "map": {255: "auto"},
         },
         "overvoltage_threshold": {
             "register": 57347,

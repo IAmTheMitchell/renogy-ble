@@ -31,7 +31,7 @@ rejects unrepresentable precision instead of truncating a binary float.
 
 ## Supported profiles and values
 
-The allowlists migrate the controls previously exposed by renogy-ha; readable
+The allowlists include the existing controls and controller charging parameters; readable
 registers do not automatically become writable. No battery, Shunt or
 Communication Hub settings are exposed. Unknown inverter profiles have no
 settings. REGO retains its established `BTRIC` advertisement-name gate with no
@@ -43,13 +43,13 @@ of its Bluetooth module's advertised name.
 | DCC and controller | `battery_type` | `custom`, `open`, `sealed`, `gel`, `lithium` |
 | Controller | `load_enabled` | `True` or `False` |
 | DCC | `max_charging_current` | 10, 20, 30, 40, 50, 60 A |
-| DCC | `overvoltage_threshold`, `charging_limit_voltage`, `equalization_voltage`, `boost_voltage`, `float_voltage`, `boost_return_voltage`, `overdischarge_return_voltage`, `undervoltage_warning`, `overdischarge_voltage`, `discharge_limit_voltage` | 7–17 V, 0.1 V steps |
+| DCC and controller | `overvoltage_threshold`, `charging_limit_voltage`, `equalization_voltage`, `boost_voltage`, `float_voltage`, `boost_return_voltage`, `overdischarge_return_voltage`, `undervoltage_warning`, `overdischarge_voltage`, `discharge_limit_voltage` | 7–17 V, 0.1 V steps |
 | DCC | `reverse_charging_voltage` | 11–15 V, 0.1 V steps |
-| DCC | `overdischarge_delay` | 0–120 seconds, integer |
-| DCC | `equalization_time` | 0–300 minutes, integer |
-| DCC | `boost_time` | 10–300 minutes, integer |
-| DCC | `equalization_interval` | 0–255 days, integer |
-| DCC | `temperature_compensation` | 0–5 mV/C/2V, integer |
+| DCC and controller | `overdischarge_delay` | 0–120 seconds, integer |
+| DCC and controller | `equalization_time` | 0–300 minutes, integer |
+| DCC and controller | `boost_time` | 10–300 minutes, integer |
+| DCC and controller | `equalization_interval` | 0–255 days, integer |
+| DCC and controller | `temperature_compensation` | 0–5 mV/C/2V, integer |
 | DCC | `solar_cutoff_current` | 0–10 A, 0.01 A precision |
 | REGO | `inverter_ac_input_current_limit` | 1–50 A, 1 A steps |
 | REGO | `inverter_charge_current` | 5–150 A, 5 A steps |
@@ -80,10 +80,24 @@ configured address. Existing low-level `write_register` and
 `write_single_register` signatures and result types remain available. This change
 does not alter Hub addressing or add Hub writes.
 
-## Release
+## Controller charging parameters and release
 
-This API is an unpublished candidate based on release 2.9.0; it is not available
-in the released 2.9.0 package. Release automation must publish the library change
-before consumers adopt a final released dependency pin. Tests cover serialized
-requests, profile gating, precision, and acknowledgement errors with mocked GATT;
-no new live-hardware validation was performed during this migration.
+Controller charging-parameter writes are an unpublished extension to the settings
+API in 2.11.0. Consumers must wait for a library release before pinning a version
+with these capabilities. The controller supports the 15 charging parameters in
+the table; DCC-only reverse charging voltage, maximum charging current and solar
+cutoff current remain unsupported on controllers.
+
+These controls retain conservative application bounds shared with DCC controls,
+not newly verified hardware limits. Renogy presets manage their own voltage
+table. Select `custom` before changing charging voltages, check every value
+against the battery datasheet, and confirm subsequent device readback. Changing
+the battery preset can itself load firmware defaults; an acknowledgement does
+not prove that the bank is charging safely or that a value was retained.
+
+Tests cover serialized requests, profile gating, precision and acknowledgement
+errors with mocked GATT. No independent live-hardware validation was performed.
+
+Controller `system_voltage` readback normalizes the auto-detection sentinel to
+`"auto"`; fixed nominal voltages remain integers. Previously auto-detection was
+returned as the raw integer 255. DCC system-voltage readback is unchanged.
