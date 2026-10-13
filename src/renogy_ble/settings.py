@@ -148,9 +148,7 @@ _RIV_INVERTER_SPECS = (
         Decimal("0.1"),
     ),
     _SettingSpec(
-        DeviceSetting(
-            "output_priority", "choice", options=("SOL", "UTI", "SBU")
-        ),
+        DeviceSetting("output_priority", "choice", options=("SOL", "UTI", "SBU")),
         0x1159,
         enum=((0, "SOL"), (1, "UTI"), (2, "SBU")),
     ),

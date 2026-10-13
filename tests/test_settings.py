@@ -249,16 +249,11 @@ def test_capabilities_are_explicit_and_have_no_wire_metadata():
     }
     assert not get_device_settings("inverter")
     assert [
-        cap.key
-        for cap in get_device_settings(
-            "inverter", model_hint="RIV4835CSH1S"
-        )
+        cap.key for cap in get_device_settings("inverter", model_hint="RIV4835CSH1S")
     ] == ["inverter_ac_charge_current", "output_priority"]
     assert next(
         cap
-        for cap in get_device_settings(
-            "inverter", model_hint="RIV4835CSH1S"
-        )
+        for cap in get_device_settings("inverter", model_hint="RIV4835CSH1S")
         if cap.key == "output_priority"
     ).options == ("SOL", "UTI", "SBU")
     assert not get_device_settings("hub")

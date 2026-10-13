@@ -66,7 +66,8 @@ fields. In particular, the library encodes `custom` as 0 on DCC and 5 on control
 Inverter reads and writes share their setting definitions. RIV4835CSH1S Program
 01 output priority is hardware-validated at register `0x1159`, with raw values
 `0=SOL`, `1=UTI`, and `2=SBU`. Ordinary inverter polling provides authoritative
-readback after writes.
+readback after writes. An unknown Program 01 raw value omits `output_priority`
+from the result and clears any previously cached mode.
 
 ## Acknowledgement and addressing
 

@@ -1120,6 +1120,9 @@ class RenogyBleClient:
                     parser = getattr(self, spec.parser_name)
                     parsed = parser(result_data)
                     if not parsed:
+                        if spec.parser_name == "_parse_riv4835csh1s_output_priority":
+                            # An unknown mode invalidates the previous known value.
+                            device.parsed_data.pop("output_priority", None)
                         logger.info(
                             "Failed to parse inverter register %s from device %s",
                             spec.register,

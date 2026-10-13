@@ -122,9 +122,7 @@ def test_riv4835csh1s_program28_response(raw: int, amps: float) -> None:
     ("raw", "priority"),
     [(0, "SOL"), (1, "UTI"), (2, "SBU")],
 )
-def test_riv4835csh1s_output_priority_response(
-    raw: int, priority: str
-) -> None:
+def test_riv4835csh1s_output_priority_response(raw: int, priority: str) -> None:
     """Parse hardware-validated Program 01 values from register 0x1159."""
     parsed = RenogyBleClient._parse_riv4835csh1s_output_priority(
         _modbus_read_response([raw])
@@ -136,20 +134,22 @@ def test_riv4835csh1s_output_priority_response(
 def test_riv4835csh1s_output_priority_rejects_unknown_value() -> None:
     """Do not infer a Program 01 mode from an unknown raw value."""
     assert (
-        RenogyBleClient._parse_riv4835csh1s_output_priority(
-            _modbus_read_response([3])
-        )
+        RenogyBleClient._parse_riv4835csh1s_output_priority(_modbus_read_response([3]))
         == {}
     )
 
 
-def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
+@pytest.mark.parametrize("unknown_priority", [3, 65535])
+def test_riv4835csh1s_read_uses_only_supported_registers(
+    monkeypatch, unknown_priority: int
+) -> None:
     """Read captured RIV frames without probing unsupported registers."""
 
     class DummyClient:
         def __init__(self) -> None:
             self.is_connected = True
             self.writes: list[bytes] = []
+            self.output_priority = 2
             self._notify_handler: Callable[[object | None, bytes], None] | None = None
 
         async def start_notify(self, *_args, **_kwargs) -> None:
@@ -170,7 +170,7 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
                 4327: bytes.fromhex("20030e003cfe1102690069028a000209e7e8e0"),
                 4408: bytes.fromhex("20030c000200140016000001710000a0f6"),
                 0xE205: _modbus_read_response([100]),
-                0x1159: _modbus_read_response([2]),
+                0x1159: _modbus_read_response([self.output_priority]),
             }
             self._notify_handler(None, responses[register])
 
@@ -186,6 +186,7 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
     dummy_client = DummyClient()
 
     async def _fake_establish_connection(*_args, **_kwargs) -> DummyClient:
+        dummy_client.is_connected = True
         return dummy_client
 
     from renogy_ble import ble as ble_module
@@ -220,3 +221,16 @@ def test_riv4835csh1s_read_uses_only_supported_registers(monkeypatch) -> None:
         0xE205,
         0x1159,
     ]
+
+    # A valid but unknown response must not return the previous known mode.
+    dummy_client.output_priority = unknown_priority
+    result = asyncio.run(RenogyBleClient().read_device(device))
+    assert result.success is True
+    assert "output_priority" not in result.parsed_data
+    assert "output_priority" not in device.parsed_data
+    assert result.parsed_data["inverter_ac_charge_current"] == pytest.approx(10.0)
+
+    dummy_client.output_priority = 1
+    result = asyncio.run(RenogyBleClient().read_device(device))
+    assert result.success is True
+    assert result.parsed_data["output_priority"] == "UTI"
