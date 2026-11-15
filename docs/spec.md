@@ -74,6 +74,43 @@ times out. If at least one command succeeds, `RenogyBleReadResult.success` is
 be incomplete. No completeness flag is currently exposed; callers that require
 a specific data set should validate the expected keys.
 
+### DCC input power: verified RBC50D1S-G7 behavior
+
+For `device_type="dcc"`, `RenogyBLEDevice.update_parsed_data()` normalizes
+`0x0100` responses only when the cached `device_info` model is exactly
+`RBC50D1S-G7`, ignoring case and surrounding whitespace:
+
+| Returned key | Meaning on RBC50D1S-G7 |
+| --- | --- |
+| `alternator_power` | Reported alternator/DC-input power at `0x0106`, unchanged |
+| `combined_input_power` | Reported combined solar and alternator input power at `0x0109` |
+| `solar_power` | `max(0, combined_input_power - alternator_power)` |
+
+If a partial response provides the combined total without alternator power,
+normalization does not add a `solar_power` value from that response. The shared
+DCC register map and the lower-level `RenogyParser.parse()` retain their existing
+interpretation; the normalization requires the device wrapper's model metadata.
+
+This scope follows the controlled tests and raw captures in
+[renogy-ha issue #150](https://github.com/IAmTheMitchell/renogy-ha/issues/150#issuecomment-5635132622).
+On the tested RBC50D1S-G7, an alternator-only capture reports 20 W at both
+`0x0106` and `0x0109` with zero PV voltage/current. A combined-input capture
+reports 74 W and 93 W respectively, consistent with about 19 W of solar input.
+Solar-only behavior was separately reported; its regression frames are synthetic.
+
+Testing is still needed for the rest of the RBC30D1S/RBC50D1S device families.
+Reports of similar symptoms on other units do not identify their exact revisions,
+so they do not establish that every family member uses the same register meaning.
+Other revisions and unknown models retain the existing `solar_power` mapping and
+do not gain `combined_input_power` through this normalization.
+
+Before expanding the model guard, collect the exact model/revision, firmware
+information when available, and raw `0x0100` responses for alternator-only,
+solar-only, and combined-input operation. Include independent input measurements
+or PV/alternator voltage and current to check the power interpretation, then add
+captured-frame regression tests for each newly verified model. Synthetic frames
+alone do not verify hardware semantics.
+
 ## Modbus Validation
 
 Request helpers construct CRC-framed Modbus reads and writes. Response handling
