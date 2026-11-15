@@ -1,7 +1,7 @@
 """Regression tests for DCC combined-input versus solar-only power.
 
 The two 50A G7 frames were captured from hardware in renogy-ha issue #150.
-30A and solar-only cases use synthetic register values following that layout.
+Solar-only cases use synthetic register values following that layout.
 """
 
 from __future__ import annotations
@@ -62,12 +62,12 @@ def test_hardware_g7_frames_expose_separate_input_powers(
     assert device.parsed_data["combined_input_power"] == combined
 
 
-@pytest.mark.parametrize("model", ["RBC30D1S-G4", "RBC50D1S-G7"])
+@pytest.mark.parametrize("model", ["RBC50D1S-G7", " rbc50d1s-g7 "])
 @pytest.mark.parametrize(
     ("alternator", "total", "solar"),
     [(0, 30, 30), (30, 30, 0), (20, 54, 34)],
 )
-def test_rbc_30a_and_50a_input_modes(
+def test_verified_g7_input_modes(
     model: str, alternator: int, total: int, solar: int
 ) -> None:
     """Check solar-only, alternator-only and combined-input calculations."""
@@ -80,7 +80,22 @@ def test_rbc_30a_and_50a_input_modes(
     assert device.parsed_data["solar_power"] == solar
 
 
-@pytest.mark.parametrize("model", ["DCC50S", "RBC20D1U", "Dcc", ""])
+@pytest.mark.parametrize(
+    "model",
+    [
+        "DCC50S",
+        "RBC20D1U",
+        "Dcc",
+        "",
+        "RBC30D1S-G4",
+        "RBC30D1S-G7",
+        "RBC50D1S",
+        "RBC50D1S-G6",
+        "RBC50D1S-G8",
+        "RBC50D1S-G70",
+        "RBC50D1S-G7-UNKNOWN",
+    ],
+)
 def test_other_or_unknown_dcc_models_keep_existing_register_mapping(model: str) -> None:
     """Never reinterpret the shared register for models without evidence."""
     device = _device(model)

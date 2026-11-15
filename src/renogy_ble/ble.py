@@ -130,9 +130,9 @@ COMMANDS = {
 DCC_G6_MODEL_SUFFIX = "-G6"
 DCC_G6_DYNAMIC_DATA_WORDS = 34  # 0x0100-0x0121
 
-# Hardware-reported DCC 0x0109 is combined input power for these RBC
-# charger families. Other DCC models retain the documented solar-only mapping.
-DCC_COMBINED_INPUT_MODEL_PREFIXES = ("RBC30D1S", "RBC50D1S")
+# Hardware captures verify DCC 0x0109 as combined input power on RBC50D1S-G7.
+# Other DCC models retain the documented solar-only mapping pending verification.
+DCC_COMBINED_INPUT_MODELS = frozenset({"RBC50D1S-G7"})
 
 
 def modbus_crc(data: bytes | bytearray) -> tuple[int, int]:
@@ -376,15 +376,16 @@ class RenogyBLEDevice:
                 self.last_unavailable_time = datetime.now()
 
     def _normalize_dcc_input_power(self, parsed: dict[str, Any]) -> None:
-        """Separate combined input power on verified RBC DCC charger families.
+        """Separate combined input power on the verified RBC50D1S-G7 model.
 
         Register 0x0109 is decoded as solar_power by the shared DCC register
-        map, but RBC30D1S/RBC50D1S models report total input power there.
+        map, but RBC50D1S-G7 reports total input power there.
         The underlying registers and values are not changed.
         """
         model = self.parsed_data.get("model")
-        if not isinstance(model, str) or not model.strip().upper().startswith(
-            DCC_COMBINED_INPUT_MODEL_PREFIXES
+        if (
+            not isinstance(model, str)
+            or model.strip().upper() not in DCC_COMBINED_INPUT_MODELS
         ):
             return
 
