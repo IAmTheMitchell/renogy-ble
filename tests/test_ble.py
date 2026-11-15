@@ -2207,8 +2207,8 @@ def test_update_parsed_data_rejects_bit_flipped_payload(monkeypatch):
     assert device.parsed_data.get("battery_voltage") == 13.0
 
 
-def _dcc_g6_dummy_client_and_requests():
-    """Build a DummyClient that answers like an RBC50D1S-G6 charger."""
+def _dcc_status_tail_dummy_client_and_requests(model="RBC50D1S-G6"):
+    """Build a DummyClient for DCC firmware with only a two-word status tail."""
     requests: list[tuple[int, int]] = []
 
     class DummyClient:
@@ -2231,7 +2231,7 @@ def _dcc_g6_dummy_client_and_requests():
             if register == 12:
                 self._notify_handler(
                     None,
-                    _modbus_ascii_response(DEFAULT_DEVICE_ID, "RBC50D1S-G6", 8),
+                    _modbus_ascii_response(DEFAULT_DEVICE_ID, model, 8),
                 )
             elif register == 256:
                 # 34-word dynamic_data with the status tail: 0x0120 low byte
@@ -2247,7 +2247,7 @@ def _dcc_g6_dummy_client_and_requests():
                 self._notify_handler(
                     None, _modbus_read_response(DEFAULT_DEVICE_ID, [5000])
                 )
-            # register 288 (status) deliberately gets NO reply, like real G6
+            # register 288 (status) deliberately gets NO reply, like real G5/G6
             # hardware -- reaching it at all is the regression this guards.
 
         async def stop_notify(self, *_args, **_kwargs):
@@ -2270,15 +2270,16 @@ _DCC_TEST_COMMANDS = {
 }
 
 
-def test_g6_dcc_skips_status_and_reads_it_from_dynamic_data(monkeypatch):
-    """A -G6 DCC must never be sent the status command it cannot answer.
+@pytest.mark.parametrize("model", ["RBC50D1S-G5", "RBC50D1S-G6"])
+def test_dcc_skips_status_and_reads_it_from_dynamic_data(monkeypatch, model):
+    """A G5/G6 DCC must never be sent the status command it cannot answer.
 
-    G6 firmware times out the discrete 0x0120 read; the timeout would abort
+    G5/G6 firmware times out the discrete 0x0120 read; the timeout would abort
     every later command and tear down the session. The model parsed from
     device_info in the same poll must instead extend dynamic_data to 34 words
     and skip status entirely, with charging_status served from the tail.
     """
-    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+    dummy_client, requests = _dcc_status_tail_dummy_client_and_requests(model)
 
     async def _fake_establish_connection(*_args, **_kwargs):
         return dummy_client
@@ -2298,17 +2299,21 @@ def test_g6_dcc_skips_status_and_reads_it_from_dynamic_data(monkeypatch):
     requested_registers = [register for register, _words in requests]
     assert 288 not in requested_registers
     assert (256, 34) in requests
-    assert result.parsed_data["model"] == "RBC50D1S-G6"
+    assert result.success
+    assert result.parsed_data["model"] == model
     assert result.parsed_data["charging_status"] == "mppt"
     assert result.parsed_data["fault_high"] == 0
+    for field in ("fault_low", "charging_mode", "ignition_status"):
+        assert field not in result.parsed_data
     # Commands after "status" must still run -- on current code the status
     # timeout would have broken the loop before current_limit.
     assert result.parsed_data["max_charging_current"] == 50.0
 
 
-def test_g6_dcc_reads_device_info_before_reordered_custom_commands(monkeypatch):
-    """Custom DCC command order must not bypass G6 model detection."""
-    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+@pytest.mark.parametrize("model", ["RBC50D1S-G5", "RBC50D1S-G6"])
+def test_dcc_reads_device_info_before_reordered_custom_commands(monkeypatch, model):
+    """Custom DCC command order must not bypass G5/G6 model detection."""
+    dummy_client, requests = _dcc_status_tail_dummy_client_and_requests(model)
 
     async def _fake_establish_connection(*_args, **_kwargs):
         return dummy_client
@@ -2340,9 +2345,9 @@ def test_g6_dcc_reads_device_info_before_reordered_custom_commands(monkeypatch):
     assert result.parsed_data["max_charging_current"] == 50.0
 
 
-def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
-    """A non-G6 DCC keeps the 32-word dynamic read and the status command."""
-    dummy_client, requests = _dcc_g6_dummy_client_and_requests()
+def test_other_dcc_keeps_discrete_status_read(monkeypatch):
+    """Other DCC firmware keeps the 32-word dynamic read and the status command."""
+    dummy_client, requests = _dcc_status_tail_dummy_client_and_requests()
 
     async def _fake_establish_connection(*_args, **_kwargs):
         return dummy_client
@@ -2351,7 +2356,7 @@ def test_non_g6_dcc_keeps_discrete_status_read(monkeypatch):
 
     monkeypatch.setattr(ble_module, "establish_connection", _fake_establish_connection)
 
-    # Same frames, but the device identifies as a non-G6 DCC50S-family model.
+    # Same frames, but the device identifies as a different DCC50S-family model.
     original_write = dummy_client.write_gatt_char
 
     async def _write(_uuid, payload):
