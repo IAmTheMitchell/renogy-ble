@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.12.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.12.0...v2.12.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* separate DCC combined input power from solar power on RBC30/50 ([#207](https://github.com/IAmTheMitchell/renogy-ble/issues/207)) ([0db1514](https://github.com/IAmTheMitchell/renogy-ble/commit/0db1514a2db4f20861528bdaa13dba7c9afdb2c1))
+
 ## [2.12.0](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.11.0...v2.12.0) (2026-10-13)
 
 
