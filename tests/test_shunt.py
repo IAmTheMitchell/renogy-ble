@@ -810,6 +810,7 @@ def test_partial_connection_is_released(monkeypatch, mode, outcome):
             release_discovery.set()
             if mode == "read":
                 result = await asyncio.wait_for(task, 1)
+                assert result is not None
                 assert not result.success
                 assert str(result.error) == "service discovery failed"
             else:
