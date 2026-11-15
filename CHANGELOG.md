@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.12.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.12.1...v2.12.2) (2026-11-15)
+
+
+### Bug Fixes
+
+* apply DCC status-tail handling to G5 models ([#209](https://github.com/IAmTheMitchell/renogy-ble/issues/209)) ([42b4b1a](https://github.com/IAmTheMitchell/renogy-ble/commit/42b4b1a7cafb2db2bf0c2d1ae369ab7962cfe2e2))
+
 ## [2.12.1](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.12.0...v2.12.1) (2026-11-15)
 
 
