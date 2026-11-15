@@ -118,17 +118,17 @@ COMMANDS = {
     },
 }
 
-# G6-generation DCC units (model suffix "-G6", e.g. RBC50D1S-G6) never answer
+# G5/G6 DCC units (e.g. RBC50D1S-G5 and RBC50D1S-G6) never answer
 # the discrete status read at 0x0120 -- the request times out on every poll.
 # Because a read timeout desynchronizes the notification stream, the timeout
 # also aborts every command queued after "status" and tears down the session.
 # The same firmware does answer a 34-word read at 0x0100, whose tail covers
 # 0x0120-0x0121 (charging_status and fault_high); registers beyond 0x0121
-# appear not to exist on G6 hardware, so a request spanning them fails as a
-# whole. For G6 models the "status" command is therefore skipped and
+# appear not to exist on this firmware, so a request spanning them fails as a
+# whole. For G5/G6 models the "status" command is therefore skipped and
 # "dynamic_data" is extended to cover the status tail instead.
-DCC_G6_MODEL_SUFFIX = "-G6"
-DCC_G6_DYNAMIC_DATA_WORDS = 34  # 0x0100-0x0121
+DCC_STATUS_TAIL_MODEL_SUFFIXES = ("-G5", "-G6")
+DCC_STATUS_TAIL_DYNAMIC_DATA_WORDS = 34  # 0x0100-0x0121
 
 # Hardware captures verify DCC 0x0109 as combined input power on RBC50D1S-G7.
 # Other DCC models retain the documented solar-only mapping pending verification.
@@ -597,21 +597,21 @@ class RenogyBleClient:
         """Return the command to send to this device, or None to skip it.
 
         The model string parsed from the device_info command earlier in the
-        same poll cycle identifies G6-generation DCC units, which never answer
+        same poll cycle identifies G5/G6 DCC units, which never answer
         the discrete status read and need the dynamic_data read extended to
-        cover the status tail instead (see DCC_G6_MODEL_SUFFIX).
+        cover the status tail instead (see DCC_STATUS_TAIL_MODEL_SUFFIXES).
         """
         if device.device_type != "dcc":
             return cmd
         model = device.parsed_data.get("model")
         if not isinstance(model, str) or not model.strip().upper().endswith(
-            DCC_G6_MODEL_SUFFIX
+            DCC_STATUS_TAIL_MODEL_SUFFIXES
         ):
             return cmd
         if cmd_name == "status":
             return None
         if cmd_name == "dynamic_data":
-            return (cmd[0], cmd[1], DCC_G6_DYNAMIC_DATA_WORDS)
+            return (cmd[0], cmd[1], DCC_STATUS_TAIL_DYNAMIC_DATA_WORDS)
         return cmd
 
     async def read_device(self, device: RenogyBLEDevice) -> RenogyBleReadResult:
@@ -699,7 +699,7 @@ class RenogyBleClient:
                     )
                     if adjusted_cmd is None:
                         logger.debug(
-                            "Skipping %s command for G6 DCC device %s",
+                            "Skipping %s command for G5/G6 DCC device %s",
                             cmd_name,
                             device.name,
                         )
