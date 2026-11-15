@@ -130,6 +130,10 @@ COMMANDS = {
 DCC_G6_MODEL_SUFFIX = "-G6"
 DCC_G6_DYNAMIC_DATA_WORDS = 34  # 0x0100-0x0121
 
+# Hardware captures verify DCC 0x0109 as combined input power on RBC50D1S-G7.
+# Other DCC models retain the documented solar-only mapping pending verification.
+DCC_COMBINED_INPUT_MODELS = frozenset({"RBC50D1S-G7"})
+
 
 def modbus_crc(data: bytes | bytearray) -> tuple[int, int]:
     """Calculate the Modbus CRC16 of the given data.
@@ -371,6 +375,37 @@ class RenogyBLEDevice:
                 self.available = False
                 self.last_unavailable_time = datetime.now()
 
+    def _normalize_dcc_input_power(self, parsed: dict[str, Any]) -> None:
+        """Separate combined input power on the verified RBC50D1S-G7 model.
+
+        Register 0x0109 is decoded as solar_power by the shared DCC register
+        map, but RBC50D1S-G7 reports total input power there.
+        The underlying registers and values are not changed.
+        """
+        model = self.parsed_data.get("model")
+        if (
+            not isinstance(model, str)
+            or model.strip().upper() not in DCC_COMBINED_INPUT_MODELS
+        ):
+            return
+
+        combined = parsed.get("solar_power")
+        if not isinstance(combined, (int, float)):
+            return
+
+        # Preserve the exact reported total independently of derived solar power.
+        parsed["combined_input_power"] = combined
+        alternator = parsed.get("alternator_power")
+        if not isinstance(alternator, (int, float)):
+            # Do not mislabel a combined total as solar-only if a partial frame
+            # did not provide the alternator input.
+            parsed.pop("solar_power", None)
+            return
+
+        # Small register-rounding differences can put the total below the
+        # alternator value when solar input is genuinely zero.
+        parsed["solar_power"] = max(0, combined - alternator)
+
     def update_parsed_data(
         self, raw_data: bytes, register: int, cmd_name: str = "unknown"
     ) -> bool:
@@ -442,6 +477,9 @@ class RenogyBLEDevice:
                     len(raw_data),
                 )
                 return False
+
+            if self.device_type == "dcc" and register == 0x0100:
+                self._normalize_dcc_input_power(parsed)
 
             self.parsed_data.update(parsed)
 
