@@ -47,6 +47,11 @@ Before opening a PR, run:
 
 ## Reporting Issues
 
+For a new device or missing device functionality, follow the
+[device-owner evidence collection guide](new-device-support.md). It covers basic
+reports, Bluetooth service inventories, app traffic captures, validation, and
+sharing files. Advanced captures are optional when opening a request.
+
 When filing a bug, include:
 
 - Device model and BT module (BT-1/BT-2)

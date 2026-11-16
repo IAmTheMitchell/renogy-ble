@@ -250,6 +250,11 @@ Returns a flat dictionary of parsed values:
 
 ## Extending for Other Models
 
+Device owners requesting support should start with the
+[new device support guide](docs/new-device-support.md). It explains how to collect
+device details, Bluetooth services, working app traffic, and matching readings.
+You can open a request with basic details before collecting advanced captures.
+
 The library is designed to be easily extensible for other Renogy device types. To add support for a new type:
 
 1. Update the `REGISTER_MAP` in `register_map.py` with the new device type's register mapping
