@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## [2.12.3](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.12.2...v2.12.3) (2026-11-26)
+
+
+### Documentation
+
+* add device owner support evidence guide ([#211](https://github.com/IAmTheMitchell/renogy-ble/issues/211)) ([bac51a5](https://github.com/IAmTheMitchell/renogy-ble/commit/bac51a573b9cfb2043f07d7c2185a066a9c5787f))
+
 ## [2.12.2](https://github.com/IAmTheMitchell/renogy-ble/compare/v2.12.1...v2.12.2) (2026-11-15)
 
 
